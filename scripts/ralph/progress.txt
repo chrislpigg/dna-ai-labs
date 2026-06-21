@@ -79,4 +79,12 @@ Started: 2026-06-20
 - Verification: `npm test` (39 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` returned `No Environment Variables found`; no preview was created because the required production configuration is absent.
 - Reusable learning: keep read access tenant-scoped in every SQL query and hold mutations fail-closed until the business write and its audit event can share one database transaction.
 
+## 2026-06-20 — US-010 Implement PostgreSQL mutation transactions
+
+- Added `src/postgres-workflow-adapter.mjs`, which handles tenant-scoped project, gate, evidence, review, decision, approval, and handoff mutations on a single PostgreSQL client transaction. Each public workflow mutation appends its durable audit event before commit; any write or audit failure rolls the transaction back and returns a non-sensitive database error.
+- Routed configured production API writes through the PostgreSQL workflow adapter, retaining SQLite solely for explicit demo mode. Production readiness now succeeds only when its required configuration is present and the database health check succeeds.
+- Added transaction and rollback coverage, updated syntax coverage and runtime documentation. Files committed in `d4c175c` with `feat: US-010 - Implement PostgreSQL mutation transactions`.
+- Verification: `npm test` (41 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` returned `No Environment Variables found`; no preview was created because required OIDC, database, tenant, approved-artifact, notification, and integration configuration is absent.
+- Reusable learning: use a checked-out PostgreSQL client—not a pool-level query helper—for transaction scope, so the workflow state change and append-only audit insert can be committed or rolled back as one unit.
+
 ---

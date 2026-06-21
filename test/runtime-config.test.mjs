@@ -86,8 +86,8 @@ test("demo mode is explicit and remains non-ready", () => {
   assert.ok(readiness.issues.includes("demo_mode_enabled"));
 });
 
-test("a complete production contract remains fail-closed until the mutation adapter exists", () => {
+test("a complete production contract is ready once the transaction adapter is available", () => {
   const readiness = runtimeReadiness(productionEnvironment);
-  assert.equal(readiness.ready, false);
-  assert.deepEqual(readiness.issues, ["production_mutation_adapter_unavailable"]);
+  assert.equal(readiness.ready, true);
+  assert.deepEqual(readiness.issues, []);
 });

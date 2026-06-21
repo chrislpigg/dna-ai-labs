@@ -76,10 +76,5 @@ export function runtimeReadiness(env = process.env) {
   const configuration = validateRuntimeConfiguration(env);
   const issues = [...configuration.issues];
   if (configuration.demoMode) issues.push("demo_mode_enabled");
-  else if (configuration.valid) {
-    // Portfolio reads can use PostgreSQL, but the transaction-backed mutation
-    // adapter is still required before a production deployment is ready.
-    issues.push("production_mutation_adapter_unavailable");
-  }
-  return Object.freeze({ ready: false, mode: configuration.mode, issues: Object.freeze(issues), configuration });
+  return Object.freeze({ ready: issues.length === 0, mode: configuration.mode, issues: Object.freeze(issues), configuration });
 }

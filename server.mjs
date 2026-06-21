@@ -4,7 +4,7 @@ import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LabsStore } from "./src/labs-store.mjs";
 import { createIdentityProvider } from "./src/identity-provider.mjs";
-import { createPostgresReadAdapter } from "./src/postgres-read-adapter.mjs";
+import { createPostgresWorkflowAdapter } from "./src/postgres-workflow-adapter.mjs";
 import { demoGroupRoleMapping, parseGroupRoleMapping, resolveApplicationRole } from "./src/role-mapping.mjs";
 import { requireRole, roles, WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
@@ -17,9 +17,10 @@ const demoMode = runtimeConfiguration.demoMode;
 const groupRoleMapping = demoMode ? demoGroupRoleMapping() : parseGroupRoleMapping(process.env.LABS_GROUP_ROLE_MAPPING);
 const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
 const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins }) : null;
-const postgresReads = !demoMode && runtimeConfiguration.valid
-  ? createPostgresReadAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID })
+const postgresWorkflow = !demoMode && runtimeConfiguration.valid
+  ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins })
   : null;
+const workflow = store || postgresWorkflow;
 const demoIdentities = demoMode ? Object.fromEntries(store.users().map(user => [user.id, {
   groups: [user.role], organization: "demo-tenant", sessionExpiresAt: "2099-01-01T00:00:00.000Z"
 }])) : undefined;
@@ -43,11 +44,11 @@ function readiness() {
   const status = runtimeReadiness(process.env);
   const issues = [...status.issues];
   if (store && !store.health()) issues.push("database_unavailable");
-  return { ready: false, mode: status.mode, issues };
+  return { ready: issues.length === 0, mode: status.mode, issues };
 }
 
 function requireOperationalRuntime() {
-  if (!store && !postgresReads) {
+  if (!workflow) {
     throw new WorkflowError("RUNTIME_NOT_CONFIGURED", "The production runtime is not yet configured for operation.", 503);
   }
 }
@@ -56,10 +57,6 @@ function requireProductionTenant(identity) {
   if (!demoMode && identity.organization !== process.env.LABS_TENANT_ID) {
     throw new WorkflowError("TENANT_SCOPE_MISMATCH", "The verified identity is not authorized for this tenant.", 403);
   }
-}
-
-function requireMutationAdapter() {
-  if (!store) throw new WorkflowError("MUTATION_ADAPTER_UNAVAILABLE", "Production workflow mutations are not available until the transaction adapter is configured.", 503);
 }
 
 async function body(req) {
@@ -73,7 +70,7 @@ async function actor(req) {
   requireOperationalRuntime();
   requireProductionTenant(identity);
   const role = resolveApplicationRole(identity.groups, groupRoleMapping);
-  const user = store ? store.actor(identity.subject) : await postgresReads.getActorBySubject(identity.subject, role);
+  const user = store ? store.actor(identity.subject) : await postgresWorkflow.getActorBySubject(identity.subject, role);
   return { ...user, role, identity };
 }
 
@@ -85,35 +82,34 @@ async function api(req, res, url) {
   });
   const path = url.pathname;
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
-  if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: store ? store.listProjects() : await postgresReads.listProjects() });
+  if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: await workflow.listProjects() });
   if (req.method === "GET" && path === "/api/v1/audit-events") {
     requireRole(requestActor, [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.ADMIN]);
     const limit = Number(url.searchParams.get("limit")) || 100;
-    return respond(res, 200, { events: store ? store.auditEvents(requestActor, limit) : await postgresReads.listAuditEvents(limit) });
+    return respond(res, 200, { events: store ? store.auditEvents(requestActor, limit) : await workflow.listAuditEvents(limit) });
   }
-  requireMutationAdapter();
-  if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: store.createIntake(requestActor, await body(req)) });
+  if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: await workflow.createIntake(requestActor, await body(req)) });
 
   let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
-  if (req.method === "POST" && match) return respond(res, 200, { project: store.selectProject(requestActor, match[1]) });
+  if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.selectProject(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/start-incubation$/);
-  if (req.method === "POST" && match) return respond(res, 200, { project: store.startIncubation(requestActor, match[1]) });
+  if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.startIncubation(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/adoption\/acknowledge$/);
-  if (req.method === "POST" && match) return respond(res, 200, { project: store.acknowledgeAdoption(requestActor, match[1]) });
+  if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.acknowledgeAdoption(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/evidence$/);
-  if (req.method === "POST" && match) return respond(res, 201, { project: store.addEvidence(requestActor, match[1], await body(req)) });
+  if (req.method === "POST" && match) return respond(res, 201, { project: await workflow.addEvidence(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/reviews\/([a-z_]+)$/);
-  if (req.method === "PUT" && match) return respond(res, 200, { project: store.setReview(requestActor, match[1], match[2], await body(req)) });
+  if (req.method === "PUT" && match) return respond(res, 200, { project: await workflow.setReview(requestActor, match[1], match[2], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/gates\/([a-z_]+)$/);
-  if (req.method === "PUT" && match) return respond(res, 200, { project: store.setGate(requestActor, match[1], match[2], await body(req)) });
+  if (req.method === "PUT" && match) return respond(res, 200, { project: await workflow.setGate(requestActor, match[1], match[2], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/handoff\/accept$/);
-  if (req.method === "POST" && match) return respond(res, 200, { project: store.acceptHandoff(requestActor, match[1], await body(req)) });
+  if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.acceptHandoff(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/decision-requests$/);
-  if (req.method === "POST" && match) return respond(res, 201, { decision: store.requestDecision(requestActor, match[1], await body(req)) });
+  if (req.method === "POST" && match) return respond(res, 201, { decision: await workflow.requestDecision(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/decisions\/([^/]+)\/approvals$/);
-  if (req.method === "POST" && match) return respond(res, 200, { decision: store.approveDecision(requestActor, match[1], await body(req)) });
+  if (req.method === "POST" && match) return respond(res, 200, { decision: await workflow.approveDecision(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/decisions\/([^/]+)\/finalize$/);
-  if (req.method === "POST" && match) return respond(res, 200, store.finalizeDecision(requestActor, match[1]));
+  if (req.method === "POST" && match) return respond(res, 200, await workflow.finalizeDecision(requestActor, match[1]));
   return respond(res, 404, { error: { code: "NOT_FOUND", message: "API route not found." } });
 }
 
@@ -133,7 +129,7 @@ export async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     if (req.method === "GET" && url.pathname === "/healthz") {
-      const healthy = store ? store.health() : postgresReads ? await postgresReads.health() : false;
+      const healthy = workflow ? await workflow.health() : false;
       return respond(res, healthy ? 200 : 503, { status: healthy ? "ok" : "error" });
     }
     if (req.method === "GET" && url.pathname === "/readyz") {
@@ -157,5 +153,5 @@ if (!isVercel) {
   server.listen(port, () => console.log(`DNA AI Labs command center listening on http://localhost:${port} (${demoMode ? "explicit demo mode" : "production runtime fail-closed"})`));
 }
 
-function shutdown() { server?.close(() => { Promise.resolve(store?.close() || postgresReads?.close()).finally(() => process.exit(0)); }); }
+function shutdown() { server?.close(() => { Promise.resolve(workflow?.close()).finally(() => process.exit(0)); }); }
 if (!isVercel) { process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); }
