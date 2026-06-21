@@ -4,12 +4,14 @@ import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LabsStore } from "./src/labs-store.mjs";
 import { WorkflowError } from "./src/workflow-policy.mjs";
+import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const isVercel = Boolean(process.env.VERCEL);
-const demoMode = process.env.LABS_DEMO_MODE === "true" || isVercel;
-const approvedArtifactOrigins = (process.env.LABS_ALLOWED_ARTIFACT_ORIGINS || (demoMode ? "https://intranet.example" : "")).split(",").map(origin => origin.trim()).filter(Boolean);
-const store = new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins });
+const runtimeConfiguration = validateRuntimeConfiguration(process.env);
+const demoMode = runtimeConfiguration.demoMode;
+const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
+const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins }) : null;
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
 const responseSecurityHeaders = { "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "permissions-policy": "camera=(), microphone=(), geolocation=()" };
@@ -20,11 +22,16 @@ function respond(res, status, body, headers = {}) {
 }
 
 function readiness() {
-  const issues = [];
-  if (!store.health()) issues.push("database_unavailable");
-  if (demoMode) issues.push("demo_identity_enabled");
-  if (!approvedArtifactOrigins.length) issues.push("approved_artifact_origins_missing");
-  return { ready: issues.length === 0, issues };
+  const status = runtimeReadiness(process.env);
+  const issues = [...status.issues];
+  if (store && !store.health()) issues.push("database_unavailable");
+  return { ready: false, mode: status.mode, issues };
+}
+
+function requireOperationalRuntime() {
+  if (!store) {
+    throw new WorkflowError("RUNTIME_NOT_CONFIGURED", "The production runtime is not yet configured for operation.", 503);
+  }
 }
 
 async function body(req) {
@@ -34,12 +41,14 @@ async function body(req) {
 }
 
 function actor(req) {
+  requireOperationalRuntime();
   const actorId = demoMode ? (req.headers["x-labs-actor"] || "lab-lead") : req.headers[process.env.LABS_IDENTITY_HEADER || "x-authenticated-user"];
   if (!actorId) throw new WorkflowError("UNAUTHENTICATED", "Sign-in is required. Configure the approved identity proxy before production use.", 401);
   return store.actor(actorId);
 }
 
 async function api(req, res, url) {
+  requireOperationalRuntime();
   const path = url.pathname;
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: actor(req), demoMode });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: store.listProjects() });
@@ -84,7 +93,7 @@ async function staticFile(req, res, url) {
 export async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    if (req.method === "GET" && url.pathname === "/healthz") return respond(res, 200, { status: store.health() ? "ok" : "error" });
+    if (req.method === "GET" && url.pathname === "/healthz") return respond(res, store?.health() ? 200 : 503, { status: store?.health() ? "ok" : "error" });
     if (req.method === "GET" && url.pathname === "/readyz") {
       const status = readiness();
       return respond(res, status.ready ? 200 : 503, status);
@@ -103,7 +112,7 @@ let server;
 if (!isVercel) {
   const port = Number(process.env.PORT || 4173);
   server = http.createServer(handler);
-  server.listen(port, () => console.log(`DNA AI Labs command center listening on http://localhost:${port} (${demoMode ? "demo identity mode" : "identity proxy required"})`));
+  server.listen(port, () => console.log(`DNA AI Labs command center listening on http://localhost:${port} (${demoMode ? "explicit demo mode" : "production runtime fail-closed"})`));
 }
 
 function shutdown() { server?.close(() => { store.close(); process.exit(0); }); }

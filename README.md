@@ -28,17 +28,17 @@ npm start
 
 Open `http://localhost:4173`.
 
-`npm start` enables a clearly labelled **demo identity** and allows role-switching only in the local command center. It must never be deployed outside a development environment. Use `npm test` to run the workflow suite and `npm run check` for syntax checks.
+`npm start` explicitly enables a clearly labelled **demo identity** and allows role-switching only in the local command center. It must never be deployed outside a development environment. Use `npm test` to run the workflow suite and `npm run check` for syntax checks.
 
-Vercel preview deployments use the same demo mode and a writable `/tmp` SQLite file. That data is ephemeral across serverless instances and must be treated as a demo only.
+Vercel does not implicitly enable demo mode. A preview may use the demo runtime only when `LABS_DEMO_MODE=true` is explicitly configured for that preview environment; its `/tmp` SQLite data is ephemeral and remains demo-only.
 
 ## Production deployment prerequisites
 
-Before a pilot or production deployment, replace the demo boundary with the approved SSO/OIDC identity proxy and server-side group mapping; use the company-managed relational database and backup process; configure approved internal artifact origins; and integrate the directory, work-tracking, document, analytics, calendar, and notification systems described in [SPEC.md](./SPEC.md).
+Before a pilot or production deployment, replace the demo boundary with the approved SSO/OIDC identity proxy and server-side group mapping; use the company-managed relational database and backup process; configure approved internal artifact origins; and integrate the directory, work-tracking, document, analytics, calendar, and notification systems described in [SPEC.md](./SPEC.md). The full non-secret configuration contract is in [docs/runtime-configuration.md](./docs/runtime-configuration.md).
 
 Run `npm start:secure` only behind that approved identity proxy and with `LABS_ALLOWED_ARTIFACT_ORIGINS` configured. In secure mode, the service rejects requests until a real identity adapter is connected. Do not use this local foundation for member, employee, or other sensitive data.
 
 ## Operational probes
 
 - `GET /healthz` confirms that the process and local data connection are alive.
-- `GET /readyz` is deliberately **not ready** in demo mode. It becomes ready only when demo identity is disabled and approved artifact origins are configured. Use it for deployment readiness checks, not the public portfolio UI.
+- `GET /readyz` is deliberately **not ready** in demo mode and reports only non-secret issue codes. Non-demo deployments also remain fail-closed until the production identity and storage adapters are available. Use it for deployment readiness checks, not the public portfolio UI.
