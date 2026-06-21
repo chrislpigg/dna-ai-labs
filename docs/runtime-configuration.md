@@ -2,7 +2,7 @@
 
 `LABS_DEMO_MODE=true` is the only way to start the demo runtime. Demo mode uses the seeded demo identity and SQLite implementation, is visibly labelled in the browser session, and is deliberately not ready at `/readyz`. It is appropriate only for local development or an isolated review deployment with no authoritative data.
 
-Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers. OIDC bearer tokens are verified against the configured issuer, audience, and JWKS URL; the production storage adapter remains fail-closed until it is delivered.
+Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers. OIDC bearer tokens are verified against the configured issuer, audience, and JWKS URL; portfolio and audit reads use the tenant-scoped PostgreSQL adapter. A database connection failure returns `DATABASE_UNAVAILABLE` and never substitutes demo data. Production mutations remain fail-closed until the transaction adapter is delivered.
 
 Never place raw member, DNA, health, family-history, employee, access-token, or production-log content in this application or its configuration.
 
@@ -73,8 +73,8 @@ Demo SQLite data is not a production migration source. Provision an empty, compa
 
 The organization-scope migration deliberately stops if the earlier production schema contains any workflow rows, because it cannot safely infer an organization for those records. Treat that failure as a deployment blocker: provision a clean database or obtain an approved, separately reviewed data-migration plan with explicit tenant assignments. Do not bypass the check or assign a catch-all tenant.
 
-This command creates the schema; it does not make the production HTTP runtime ready until the PostgreSQL storage adapter and the other required production adapters are configured.
+This command creates the schema; it does not make the production HTTP runtime ready until the PostgreSQL transaction adapter and the other required production adapters are configured. The current read adapter resolves the verified OIDC subject against `users.subject_ref` within `LABS_TENANT_ID`, and every portfolio, evidence, review, decision, and audit query includes that tenant scope.
 
 ## Diagnostics
 
-`GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_oidc_jwks_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, or `production_adapters_unavailable`. It never echoes environment values or secrets. Treat a `503` response as a deployment blocker.
+`GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_oidc_jwks_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, or `production_mutation_adapter_unavailable`. It never echoes environment values or secrets. Treat a `503` response as a deployment blocker.

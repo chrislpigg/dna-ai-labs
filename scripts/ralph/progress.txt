@@ -63,4 +63,20 @@ Started: 2026-06-20
 - Verification: `npm test` (36 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required production runtime configuration and company-approved PostgreSQL URL are absent.
 - Reusable learning: track SQL migrations by checksum and run them behind a database-level lock, so deployment retries are safe and edited migration history fails before it can corrupt an authoritative schema.
 
+## 2026-06-20 — US-008 Add tenant-scoped production schema
+
+- Added `003_organization_tenant_scope.sql`, which adds opaque organizations and non-null organization scope to all production workflow records, including audit events. Composite foreign keys require every parent, user reference, and workflow child to remain in the same organization; tenant-prefixed indexes support scoped queries.
+- The migration stops before changing a populated pre-tenant schema rather than infer a tenant or copy demo data. Documented the clean-database production path and the requirement for an approved, separately reviewed migration plan if existing authoritative rows ever require assignment.
+- Added schema-level migration assertions for organization columns, tenant foreign keys, audit scoping/indexing, and the no-demo-copy safeguard. Files committed in `76fb9eb` with `feat: US-008 - Add tenant-scoped production schema`.
+- Verification: `npm test` (37 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` returned `No Environment Variables found`; no preview was created because required production runtime configuration is absent.
+- Reusable learning: enforce tenant isolation in relational keys as well as future query policy, and reject unassignable legacy data rather than silently placing it into a catch-all tenant.
+
+## 2026-06-20 — US-009 Implement PostgreSQL read adapter
+
+- Added `src/postgres-read-adapter.mjs`, a read-only PostgreSQL adapter for tenant-scoped verified-user, portfolio, evidence, review, decision, approval, handoff, and audit reads. All query values are parameterized, and database failures return the structured `DATABASE_UNAVAILABLE` error without a SQLite fallback.
+- Routed configured production `GET /api/v1/projects` and `GET /api/v1/audit-events` requests through the adapter after exact verified-tenant matching. Production mutations return `MUTATION_ADAPTER_UNAVAILABLE` until US-010 provides atomic workflow and audit transactions.
+- Added query-mock coverage for tenant bindings, serialized project reads, audit access, and non-secret database errors; updated runtime documentation and syntax checks. Files changed: `src/postgres-read-adapter.mjs`, `server.mjs`, `src/runtime-config.mjs`, `test/postgres-read-adapter.test.mjs`, `test/runtime-config.test.mjs`, `package.json`, `README.md`, and `docs/runtime-configuration.md`.
+- Verification: `npm test` (39 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` returned `No Environment Variables found`; no preview was created because the required production configuration is absent.
+- Reusable learning: keep read access tenant-scoped in every SQL query and hold mutations fail-closed until the business write and its audit event can share one database transaction.
+
 ---

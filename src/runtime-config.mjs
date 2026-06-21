@@ -77,9 +77,9 @@ export function runtimeReadiness(env = process.env) {
   const issues = [...configuration.issues];
   if (configuration.demoMode) issues.push("demo_mode_enabled");
   else if (configuration.valid) {
-    // Production adapters are introduced in later stories. Do not substitute the demo
-    // identity or SQLite implementation when a deployment is marked production.
-    issues.push("production_adapters_unavailable");
+    // Portfolio reads can use PostgreSQL, but the transaction-backed mutation
+    // adapter is still required before a production deployment is ready.
+    issues.push("production_mutation_adapter_unavailable");
   }
   return Object.freeze({ ready: false, mode: configuration.mode, issues: Object.freeze(issues), configuration });
 }

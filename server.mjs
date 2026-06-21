@@ -4,8 +4,9 @@ import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LabsStore } from "./src/labs-store.mjs";
 import { createIdentityProvider } from "./src/identity-provider.mjs";
+import { createPostgresReadAdapter } from "./src/postgres-read-adapter.mjs";
 import { demoGroupRoleMapping, parseGroupRoleMapping, resolveApplicationRole } from "./src/role-mapping.mjs";
-import { WorkflowError } from "./src/workflow-policy.mjs";
+import { requireRole, roles, WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
 import { requireCsrfProtection, responseSecurityHeaders } from "./src/request-security.mjs";
 
@@ -16,6 +17,9 @@ const demoMode = runtimeConfiguration.demoMode;
 const groupRoleMapping = demoMode ? demoGroupRoleMapping() : parseGroupRoleMapping(process.env.LABS_GROUP_ROLE_MAPPING);
 const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
 const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins }) : null;
+const postgresReads = !demoMode && runtimeConfiguration.valid
+  ? createPostgresReadAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID })
+  : null;
 const demoIdentities = demoMode ? Object.fromEntries(store.users().map(user => [user.id, {
   groups: [user.role], organization: "demo-tenant", sessionExpiresAt: "2099-01-01T00:00:00.000Z"
 }])) : undefined;
@@ -43,9 +47,19 @@ function readiness() {
 }
 
 function requireOperationalRuntime() {
-  if (!store) {
+  if (!store && !postgresReads) {
     throw new WorkflowError("RUNTIME_NOT_CONFIGURED", "The production runtime is not yet configured for operation.", 503);
   }
+}
+
+function requireProductionTenant(identity) {
+  if (!demoMode && identity.organization !== process.env.LABS_TENANT_ID) {
+    throw new WorkflowError("TENANT_SCOPE_MISMATCH", "The verified identity is not authorized for this tenant.", 403);
+  }
+}
+
+function requireMutationAdapter() {
+  if (!store) throw new WorkflowError("MUTATION_ADAPTER_UNAVAILABLE", "Production workflow mutations are not available until the transaction adapter is configured.", 503);
 }
 
 async function body(req) {
@@ -57,8 +71,10 @@ async function body(req) {
 async function actor(req) {
   const identity = await identityProvider.authenticate(req);
   requireOperationalRuntime();
+  requireProductionTenant(identity);
   const role = resolveApplicationRole(identity.groups, groupRoleMapping);
-  return { ...store.actor(identity.subject), role, identity };
+  const user = store ? store.actor(identity.subject) : await postgresReads.getActorBySubject(identity.subject, role);
+  return { ...user, role, identity };
 }
 
 async function api(req, res, url) {
@@ -69,8 +85,13 @@ async function api(req, res, url) {
   });
   const path = url.pathname;
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
-  if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: store.listProjects() });
-  if (req.method === "GET" && path === "/api/v1/audit-events") return respond(res, 200, { events: store.auditEvents(requestActor, Number(url.searchParams.get("limit")) || 100) });
+  if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: store ? store.listProjects() : await postgresReads.listProjects() });
+  if (req.method === "GET" && path === "/api/v1/audit-events") {
+    requireRole(requestActor, [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.ADMIN]);
+    const limit = Number(url.searchParams.get("limit")) || 100;
+    return respond(res, 200, { events: store ? store.auditEvents(requestActor, limit) : await postgresReads.listAuditEvents(limit) });
+  }
+  requireMutationAdapter();
   if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: store.createIntake(requestActor, await body(req)) });
 
   let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
@@ -111,7 +132,10 @@ async function staticFile(req, res, url) {
 export async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    if (req.method === "GET" && url.pathname === "/healthz") return respond(res, store?.health() ? 200 : 503, { status: store?.health() ? "ok" : "error" });
+    if (req.method === "GET" && url.pathname === "/healthz") {
+      const healthy = store ? store.health() : postgresReads ? await postgresReads.health() : false;
+      return respond(res, healthy ? 200 : 503, { status: healthy ? "ok" : "error" });
+    }
     if (req.method === "GET" && url.pathname === "/readyz") {
       const status = readiness();
       return respond(res, status.ready ? 200 : 503, status);
@@ -133,5 +157,5 @@ if (!isVercel) {
   server.listen(port, () => console.log(`DNA AI Labs command center listening on http://localhost:${port} (${demoMode ? "explicit demo mode" : "production runtime fail-closed"})`));
 }
 
-function shutdown() { server?.close(() => { store.close(); process.exit(0); }); }
+function shutdown() { server?.close(() => { Promise.resolve(store?.close() || postgresReads?.close()).finally(() => process.exit(0)); }); }
 if (!isVercel) { process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); }
