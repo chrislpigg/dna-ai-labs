@@ -55,4 +55,12 @@ Started: 2026-06-20
 - Verification: `npm test` (32 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required explicit production runtime configuration is absent.
 - Reusable learning: model the persistence boundary with domain operations and transaction ownership, so storage adapters can change without weakening server-owned workflow policy or durable audit behavior.
 
+## 2026-06-20 — US-007 Add PostgreSQL migration framework
+
+- Added a `pg`-backed `npm run migrate` command and a migration runner that takes an advisory lock, applies each ordered SQL migration transactionally, and records immutable version/checksum history in `schema_migrations`. The command requires `LABS_DATABASE_URL`, rejects demo mode, and does not log connection values.
+- Added PostgreSQL core tables for cycles, projects, gates, evidence, reviews, decisions, approvals, handoffs, and audit events. Audit rows are database-enforced append-only; user references are opaque directory subjects rather than directory-profile content. Tenant isolation remains intentionally deferred to the next scoped story, and the production runtime stays fail-closed in the interim.
+- Added migration runner tests for ordering, repeat runs, checksum tampering, failures/rollback, and ambiguous sequence numbers; documented the migration procedure and production database requirement. Files changed: `migrations/`, `src/migration-runner.mjs`, `scripts/migrate.mjs`, `test/migration-runner.test.mjs`, `package.json`, `package-lock.json`, `README.md`, and `docs/runtime-configuration.md`.
+- Verification: `npm test` (36 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required production runtime configuration and company-approved PostgreSQL URL are absent.
+- Reusable learning: track SQL migrations by checksum and run them behind a database-level lock, so deployment retries are safe and edited migration history fails before it can corrupt an authoritative schema.
+
 ---

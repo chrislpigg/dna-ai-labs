@@ -2,7 +2,7 @@
 
 `LABS_DEMO_MODE=true` is the only way to start the demo runtime. Demo mode uses the seeded demo identity and SQLite implementation, is visibly labelled in the browser session, and is deliberately not ready at `/readyz`. It is appropriate only for local development or an isolated review deployment with no authoritative data.
 
-Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers. OIDC bearer tokens are verified against the configured issuer, audience, and JWKS URL; PostgreSQL support remains fail-closed until its production adapter is delivered.
+Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers. OIDC bearer tokens are verified against the configured issuer, audience, and JWKS URL; the production storage adapter remains fail-closed until it is delivered.
 
 Never place raw member, DNA, health, family-history, employee, access-token, or production-log content in this application or its configuration.
 
@@ -54,6 +54,18 @@ The server resolves roles only from verified OIDC group claims. An identity with
 | `LABS_DB_PATH` | Optional SQLite path used only when demo mode is explicitly enabled. |
 
 Vercel is not itself a demo-mode switch. A preview deployment is demo-only only when `LABS_DEMO_MODE=true` is explicitly set for that preview environment; otherwise it remains fail-closed.
+
+## PostgreSQL migrations
+
+The production schema is maintained as ordered SQL files in `migrations/`. The migration runner records each version and SHA-256 checksum in `schema_migrations`, takes a PostgreSQL advisory lock, and runs each new migration in its own transaction. A changed checksum for an already-applied migration fails closed; add a new migration rather than editing history.
+
+Run migrations only against a company-approved PostgreSQL database, with the deployment secret mechanism supplying the URL:
+
+```bash
+LABS_DATABASE_URL='postgresql://…' npm run migrate
+```
+
+The command refuses `LABS_DEMO_MODE=true`, does not echo the URL, and never creates a SQLite fallback. The initial schema contains program metadata and approved-link references only, and it enforces append-only audit events at the database layer. This command creates the schema; it does not make the production HTTP runtime ready until tenant isolation, the PostgreSQL storage adapter, and the other required production adapters are configured.
 
 ## Diagnostics
 

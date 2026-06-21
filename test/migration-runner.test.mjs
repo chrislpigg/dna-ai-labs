@@ -1,0 +1,64 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { loadSqlMigrations, runMigrations } from "../src/migration-runner.mjs";
+
+class FakePostgresClient {
+  constructor({ applied = [], failSql = null } = {}) {
+    this.applied = new Map(applied.map(row => [row.version, row.checksum]));
+    this.failSql = failSql;
+    this.calls = [];
+  }
+
+  async query(sql, params = []) {
+    this.calls.push({ sql, params });
+    if (sql.startsWith("SELECT version, checksum")) return { rows: [...this.applied].map(([version, checksum]) => ({ version, checksum })) };
+    if (sql === this.failSql) throw new Error("migration execution failed");
+    if (sql.startsWith("INSERT INTO schema_migrations")) this.applied.set(params[0], params[1]);
+    return { rows: [] };
+  }
+}
+
+test("repository migrations are ordered and include the current core schema", () => {
+  const migrations = loadSqlMigrations();
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only"]);
+  assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
+  assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
+  assert.match(migrations[1].sql, /append-only/);
+});
+
+test("migration runner records applied checksums and skips tracked migrations", async () => {
+  const migrations = [
+    { version: "010_second", sql: "CREATE TABLE second_table ();" },
+    { version: "002_first", sql: "CREATE TABLE first_table ();" }
+  ];
+  const client = new FakePostgresClient();
+  const first = await runMigrations(client, { migrations });
+  assert.deepEqual(first.applied, ["002_first", "010_second"]);
+  assert.equal(client.calls.filter(call => call.sql === "BEGIN").length, 2);
+  assert.equal(client.calls.some(call => call.sql.startsWith("SELECT pg_advisory_lock")), true);
+
+  const second = await runMigrations(client, { migrations });
+  assert.deepEqual(second.applied, []);
+  assert.equal(client.calls.filter(call => call.sql === "BEGIN").length, 2);
+});
+
+test("migration runner fails closed on edited history and rolls back failed migration work", async () => {
+  const migration = { version: "001_first", sql: "CREATE TABLE first_table ();" };
+  const client = new FakePostgresClient({ applied: [{ version: migration.version, checksum: "0".repeat(64) }] });
+  await assert.rejects(() => runMigrations(client, { migrations: [migration] }), /checksum mismatch/);
+
+  const failing = new FakePostgresClient({ failSql: "CREATE TABLE broken_table ();" });
+  await assert.rejects(
+    () => runMigrations(failing, { migrations: [{ version: "001_broken", sql: "CREATE TABLE broken_table ();" }] }),
+    /migration execution failed/
+  );
+  assert.equal(failing.calls.some(call => call.sql === "ROLLBACK"), true);
+});
+
+test("migration runner rejects ambiguous migration sequence numbers", async () => {
+  const client = new FakePostgresClient();
+  await assert.rejects(
+    () => runMigrations(client, { migrations: [{ version: "001_first", sql: "SELECT 1;" }, { version: "1_duplicate", sql: "SELECT 2;" }] }),
+    /Duplicate migration version/
+  );
+});
