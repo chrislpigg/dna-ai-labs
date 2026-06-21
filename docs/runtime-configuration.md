@@ -2,7 +2,7 @@
 
 `LABS_DEMO_MODE=true` is the only way to start the demo runtime. Demo mode uses the seeded demo identity and SQLite implementation, is visibly labelled in the browser session, and is deliberately not ready at `/readyz`. It is appropriate only for local development or an isolated review deployment with no authoritative data.
 
-Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers and remains fail-closed until the OIDC token-verification and PostgreSQL adapters are delivered in later stories.
+Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers. OIDC bearer tokens are verified against the configured issuer, audience, and JWKS URL; PostgreSQL support remains fail-closed until its production adapter is delivered.
 
 Never place raw member, DNA, health, family-history, employee, access-token, or production-log content in this application or its configuration.
 
@@ -12,6 +12,7 @@ Never place raw member, DNA, health, family-history, employee, access-token, or 
 | --- | --- | --- |
 | `LABS_OIDC_ISSUER` | Approved OIDC issuer used for token validation. | URL, not displayed by diagnostics. |
 | `LABS_OIDC_AUDIENCE` | OIDC audience accepted by this service. | Identifier, not displayed by diagnostics. |
+| `LABS_OIDC_JWKS_URL` | Approved OIDC JWKS endpoint used to verify bearer-token signatures. | HTTPS URL, not displayed by diagnostics. |
 | `LABS_OIDC_CLIENT_ID` | Registered server-side OIDC client identifier. | Identifier, not displayed by diagnostics. |
 | `LABS_DATABASE_URL` | Company-managed PostgreSQL connection URL. | Secret; diagnostics report only that it is missing. |
 | `LABS_TENANT_ID` | Authoritative organization/tenant identifier. | Identifier, not displayed by diagnostics. |
@@ -36,4 +37,4 @@ Vercel is not itself a demo-mode switch. A preview deployment is demo-only only 
 
 ## Diagnostics
 
-`GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, or `production_adapters_unavailable`. It never echoes environment values or secrets. Treat a `503` response as a deployment blocker.
+`GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_oidc_jwks_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, or `production_adapters_unavailable`. It never echoes environment values or secrets. Treat a `503` response as a deployment blocker.

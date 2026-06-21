@@ -16,7 +16,15 @@ const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "
 const demoIdentities = demoMode ? Object.fromEntries(store.users().map(user => [user.id, {
   groups: [user.role], organization: "demo-tenant", sessionExpiresAt: "2099-01-01T00:00:00.000Z"
 }])) : undefined;
-const identityProvider = createIdentityProvider({ demoMode, demoIdentities, demoDefaultSubject: "lab-lead" });
+const identityProvider = createIdentityProvider({
+  demoMode,
+  demoIdentities,
+  demoDefaultSubject: "lab-lead",
+  issuer: process.env.LABS_OIDC_ISSUER,
+  audience: process.env.LABS_OIDC_AUDIENCE,
+  jwksUri: process.env.LABS_OIDC_JWKS_URL,
+  tenantClaim: process.env.LABS_TENANT_CLAIM
+});
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
 const responseSecurityHeaders = { "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "permissions-policy": "camera=(), microphone=(), geolocation=()" };
@@ -45,14 +53,14 @@ async function body(req) {
   try { return data ? JSON.parse(data) : {}; } catch { throw new WorkflowError("INVALID_JSON", "Request body must be valid JSON.", 400); }
 }
 
-function actor(req) {
-  const identity = identityProvider.authenticate(req);
+async function actor(req) {
+  const identity = await identityProvider.authenticate(req);
   requireOperationalRuntime();
   return { ...store.actor(identity.subject), identity };
 }
 
 async function api(req, res, url) {
-  const requestActor = actor(req);
+  const requestActor = await actor(req);
   const path = url.pathname;
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: store.listProjects() });

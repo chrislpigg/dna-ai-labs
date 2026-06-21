@@ -23,4 +23,12 @@ Started: 2026-06-20
 - Files changed: `src/identity-provider.mjs`, `server.mjs`, `src/labs-store.mjs`, `test/identity-provider.test.mjs`, `package.json`, `README.md`, and `docs/runtime-configuration.md`.
 - Reusable learning: make the identity boundary return a complete verified identity object, and keep header-derived claims out of production until signature and claim verification are in place.
 
+## 2026-06-20 — US-003 Verify OIDC bearer tokens
+
+- Implemented `OidcIdentityProvider` with server-side bearer-token verification against explicitly configured HTTPS issuer, audience, tenant claim, and JWKS URL. The verifier accepts only `RS256` and `ES256` signing keys from the configured JWKS, caches keys briefly, refreshes once on an unknown key ID, and never logs token content.
+- Routed API identity resolution asynchronously through the verifier. Invalid token syntax, signatures, expiry, issuer, and audience return non-sensitive structured authentication errors; unavailable JWKS returns a non-sensitive service-unavailable error.
+- Added the `LABS_OIDC_JWKS_URL` runtime contract, HTTPS configuration validation, operator documentation, and focused cryptographic verification tests. Files changed: `src/identity-provider.mjs`, `src/runtime-config.mjs`, `server.mjs`, `test/identity-provider.test.mjs`, `test/runtime-config.test.mjs`, `README.md`, and `docs/runtime-configuration.md`.
+- Verification: `npm test` (21 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required production configuration is absent.
+- Reusable learning: mutate a significant decoded signature byte when testing JWS signature rejection; a change only to unused base64url padding bits may leave the decoded signature unchanged.
+
 ---

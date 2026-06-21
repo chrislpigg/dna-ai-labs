@@ -34,7 +34,7 @@ Vercel does not implicitly enable demo mode. A preview may use the demo runtime 
 
 ## Production deployment prerequisites
 
-Before a pilot or production deployment, configure the approved SSO/OIDC token-verification adapter and server-side group mapping; use the company-managed relational database and backup process; configure approved internal artifact origins; and integrate the directory, work-tracking, document, analytics, calendar, and notification systems described in [SPEC.md](./SPEC.md). The full non-secret configuration contract is in [docs/runtime-configuration.md](./docs/runtime-configuration.md).
+Before a pilot or production deployment, configure the approved SSO/OIDC issuer, audience, JWKS URL, and server-side group mapping; use the company-managed relational database and backup process; configure approved internal artifact origins; and integrate the directory, work-tracking, document, analytics, calendar, and notification systems described in [SPEC.md](./SPEC.md). The full non-secret configuration contract is in [docs/runtime-configuration.md](./docs/runtime-configuration.md).
 
 Run `npm start:secure` only after the approved token-verification adapter and `LABS_ALLOWED_ARTIFACT_ORIGINS` are configured. In secure mode, the service rejects all identity headers until a real identity adapter is connected. Do not use this local foundation for member, employee, or other sensitive data.
 

@@ -1,6 +1,7 @@
 const requiredProductionVariables = Object.freeze([
   ["LABS_OIDC_ISSUER", "missing_oidc_issuer"],
   ["LABS_OIDC_AUDIENCE", "missing_oidc_audience"],
+  ["LABS_OIDC_JWKS_URL", "missing_oidc_jwks_url"],
   ["LABS_OIDC_CLIENT_ID", "missing_oidc_client_id"],
   ["LABS_DATABASE_URL", "missing_database_url"],
   ["LABS_TENANT_ID", "missing_tenant_id"],
@@ -15,6 +16,15 @@ const requiredProductionVariables = Object.freeze([
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function httpsUrl(value) {
+  try {
+    const url = new URL(text(value));
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }
 
 function approvedArtifactOrigins(value) {
@@ -41,6 +51,8 @@ export function validateRuntimeConfiguration(env = process.env) {
     for (const [name, code] of requiredProductionVariables) {
       if (!text(env[name])) issues.push(code);
     }
+    if (text(env.LABS_OIDC_ISSUER) && !httpsUrl(env.LABS_OIDC_ISSUER)) issues.push("invalid_oidc_issuer");
+    if (text(env.LABS_OIDC_JWKS_URL) && !httpsUrl(env.LABS_OIDC_JWKS_URL)) issues.push("invalid_oidc_jwks_url");
     if (text(env.LABS_ALLOWED_ARTIFACT_ORIGINS) && !artifactOrigins.valid) {
       issues.push("invalid_approved_artifact_origins");
     }

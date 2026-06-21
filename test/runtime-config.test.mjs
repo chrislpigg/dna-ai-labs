@@ -5,6 +5,7 @@ import { runtimeReadiness, validateRuntimeConfiguration } from "../src/runtime-c
 const productionEnvironment = {
   LABS_OIDC_ISSUER: "https://identity.example",
   LABS_OIDC_AUDIENCE: "dna-ai-labs",
+  LABS_OIDC_JWKS_URL: "https://identity.example/keys",
   LABS_OIDC_CLIENT_ID: "dna-ai-labs-web",
   LABS_DATABASE_URL: "postgresql://configured-by-platform/dna_ai_labs",
   LABS_TENANT_ID: "company-internal",
@@ -43,6 +44,14 @@ test("artifact configuration requires HTTPS origins", () => {
   assert.equal(result.valid, false);
   assert.ok(result.issues.includes("invalid_approved_artifact_origins"));
   assert.deepEqual(result.approvedArtifactOrigins, []);
+});
+
+test("OIDC issuer and JWKS configuration require HTTPS URLs", () => {
+  const result = validateRuntimeConfiguration({ ...productionEnvironment, LABS_OIDC_ISSUER: "http://identity.example", LABS_OIDC_JWKS_URL: "not-a-url" });
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.includes("invalid_oidc_issuer"));
+  assert.ok(result.issues.includes("invalid_oidc_jwks_url"));
+  assert.equal(JSON.stringify(result).includes("identity.example"), false);
 });
 
 test("demo mode is explicit and remains non-ready", () => {
