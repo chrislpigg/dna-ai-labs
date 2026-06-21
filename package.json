@@ -7,7 +7,7 @@
     "start": "LABS_DEMO_MODE=true node server.mjs",
     "start:secure": "node server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check src/labs-store.mjs && node --check src/runtime-config.mjs && node --check src/workflow-policy.mjs && node --check app.js"
+    "check": "node --check server.mjs && node --check src/identity-provider.mjs && node --check src/labs-store.mjs && node --check src/runtime-config.mjs && node --check src/workflow-policy.mjs && node --check app.js"
   },
   "engines": {
     "node": ">=24"

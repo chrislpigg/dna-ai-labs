@@ -7,4 +7,20 @@ Started: 2026-06-20
 - The current implementation is a dependency-free Node ESM server. `npm test` and `npm run check` are the mandatory local quality gates.
 - `LABS_DEMO_MODE` and Vercel's ephemeral `/tmp` database are demo-only boundaries; production code must fail closed when essential configuration is missing.
 
+## 2026-06-20 — US-001 Document production runtime configuration
+
+- Implemented an explicit runtime configuration contract in `src/runtime-config.mjs`; production validates OIDC, PostgreSQL, tenant, approved-artifact, notification, and integration provider configuration using non-secret issue codes.
+- Removed Vercel as an implicit demo-mode switch. Demo SQLite and seeded identities now require `LABS_DEMO_MODE=true`; non-demo runtime avoids SQLite/demo fallback and remains fail-closed until the planned production adapters are available.
+- Added `docs/runtime-configuration.md`, README deployment guidance, focused configuration tests, and syntax coverage for the new module. Files committed in `22491ea` with `feat: US-001 - Document production runtime configuration`.
+- Verification: `npm test` (13 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required explicit runtime configuration is absent.
+- Reusable learning: do not infer demo mode from a deployment platform. Treat demo mode as an explicit operator decision, and expose stable missing-configuration codes rather than environment values.
+
+## 2026-06-20 — US-002 Add OIDC identity-provider interface
+
+- Added `src/identity-provider.mjs`, a server-side identity contract that returns immutable verified subject, group, organization, and session-expiry metadata. The explicit demo/test adapter is seeded from active demo users only; the production adapter fails closed and never trusts caller-supplied identity headers.
+- Routed every API request through the identity boundary before workflow access, and added focused identity-provider tests plus syntax coverage. Updated deployment guidance to state that production requires a verified token adapter rather than an identity proxy header.
+- Verification: `npm test` (17 passing), `npm run check`, and a manual explicit-demo session request passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` returned `No Environment Variables found`; no preview was created because the required production configuration is absent.
+- Files changed: `src/identity-provider.mjs`, `server.mjs`, `src/labs-store.mjs`, `test/identity-provider.test.mjs`, `package.json`, `README.md`, and `docs/runtime-configuration.md`.
+- Reusable learning: make the identity boundary return a complete verified identity object, and keep header-derived claims out of production until signature and claim verification are in place.
+
 ---

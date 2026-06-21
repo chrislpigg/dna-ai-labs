@@ -2,7 +2,7 @@
 
 `LABS_DEMO_MODE=true` is the only way to start the demo runtime. Demo mode uses the seeded demo identity and SQLite implementation, is visibly labelled in the browser session, and is deliberately not ready at `/readyz`. It is appropriate only for local development or an isolated review deployment with no authoritative data.
 
-Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. The currently available runtime remains fail-closed in production until the OIDC and PostgreSQL adapters are delivered in later stories.
+Any deployment without `LABS_DEMO_MODE=true` is treated as production. The service does not fall back to demo identity, demo artifact origins, or SQLite in that mode. `/readyz` returns non-secret issue codes for missing configuration. Production ignores caller-supplied identity headers and remains fail-closed until the OIDC token-verification and PostgreSQL adapters are delivered in later stories.
 
 Never place raw member, DNA, health, family-history, employee, access-token, or production-log content in this application or its configuration.
 

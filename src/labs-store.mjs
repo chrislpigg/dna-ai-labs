@@ -138,6 +138,10 @@ export class LabsStore {
     return actor;
   }
 
+  users() {
+    return this.db.prepare("SELECT id, role FROM users WHERE active = 1 ORDER BY id").all();
+  }
+
   audit(actorId, action, entityType, entityId, before, after) {
     this.db.prepare("INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(randomUUID(), actorId, action, entityType, entityId, before ? json(before) : null, after ? json(after) : null, now());
