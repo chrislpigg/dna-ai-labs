@@ -1,0 +1,10 @@
+# Ralph Progress Log
+
+Started: 2026-06-20
+
+## Codebase Patterns
+
+- The current implementation is a dependency-free Node ESM server. `npm test` and `npm run check` are the mandatory local quality gates.
+- `LABS_DEMO_MODE` and Vercel's ephemeral `/tmp` database are demo-only boundaries; production code must fail closed when essential configuration is missing.
+
+---
