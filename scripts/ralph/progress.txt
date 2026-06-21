@@ -39,4 +39,12 @@ Started: 2026-06-20
 - Verification: `npm test` (26 passing) and `npm run check` passed. Vercel CLI credentials and linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required production configuration contract is absent.
 - Reusable learning: resolve a single server-owned role from verified claims and reject overlaps explicitly; selecting a more privileged role from a multi-group identity silently converts group configuration drift into privilege escalation.
 
+## 2026-06-20 — US-005 Add secure session and CSRF protection
+
+- Added `src/request-security.mjs`, which preserves verified OIDC bearer-token authentication as the only current production transport and requires an exact same-origin, constant-time matched CSRF token for any future cookie-authenticated mutation. It fails closed when a cookie transport lacks an HTTPS application origin.
+- Applied one strict header set to API, error, and static responses: the existing self-only CSP remains intact, with HSTS, no-sniff, referrer, permissions, opener, and resource policies added. Cookie sessions are not enabled until a server-side session adapter is available; identity headers remain demo-only.
+- Added targeted CSRF acceptance/rejection and response-header tests. Files changed: `src/request-security.mjs`, `src/identity-provider.mjs`, `server.mjs`, `test/request-security.test.mjs`, `package.json`, and `README.md`.
+- Verification: `npm test` (30 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because required production runtime configuration is absent.
+- Reusable learning: treat CSRF as a property of cookie credentials, not a blanket replacement for bearer-token verification; apply the same CSP and security headers to JSON error responses as to static assets.
+
 ---

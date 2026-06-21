@@ -93,6 +93,8 @@ function tokenIdentity(payload, { issuer, audience, tenantClaim, now }) {
  * request headers.
  */
 export class IdentityProvider {
+  authenticationMode = "bearer";
+
   async authenticate(_request) {
     throw new Error("IdentityProvider implementations must implement authenticate().");
   }
@@ -103,6 +105,8 @@ export class IdentityProvider {
  * available from the production factory path.
  */
 export class DemoIdentityProvider extends IdentityProvider {
+  authenticationMode = "demo";
+
   constructor(identities, { defaultSubject } = {}) {
     super();
     this.identities = new Map(Object.entries(identities || {}).map(([subject, identity]) => [subject, immutableIdentity({ ...identity, subject })]));
@@ -122,6 +126,8 @@ export class DemoIdentityProvider extends IdentityProvider {
  * configured. In particular, identity proxy headers are never trusted here.
  */
 export class RejectingIdentityProvider extends IdentityProvider {
+  authenticationMode = "bearer";
+
   async authenticate(_request) {
     throw new WorkflowError("UNVERIFIED_IDENTITY", "The production identity provider must verify the request before identity claims can be used.", 401);
   }
@@ -132,6 +138,8 @@ export class RejectingIdentityProvider extends IdentityProvider {
  * JWKS URL values; it never accepts identity headers or records token text.
  */
 export class OidcIdentityProvider extends IdentityProvider {
+  authenticationMode = "bearer";
+
   constructor({ issuer, audience, jwksUri, tenantClaim, fetchImpl = globalThis.fetch, now = Date.now, jwksCacheTtlMs = 300_000 } = {}) {
     super();
     this.issuer = nonEmptyText(issuer);

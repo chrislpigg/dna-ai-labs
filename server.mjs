@@ -7,6 +7,7 @@ import { createIdentityProvider } from "./src/identity-provider.mjs";
 import { demoGroupRoleMapping, parseGroupRoleMapping, resolveApplicationRole } from "./src/role-mapping.mjs";
 import { WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
+import { requireCsrfProtection, responseSecurityHeaders } from "./src/request-security.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const isVercel = Boolean(process.env.VERCEL);
@@ -29,8 +30,6 @@ const identityProvider = createIdentityProvider({
 });
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
-const responseSecurityHeaders = { "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "permissions-policy": "camera=(), microphone=(), geolocation=()" };
-
 function respond(res, status, body, headers = {}) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...responseSecurityHeaders, ...headers });
   res.end(JSON.stringify(body));
@@ -64,6 +63,10 @@ async function actor(req) {
 
 async function api(req, res, url) {
   const requestActor = await actor(req);
+  requireCsrfProtection(req, {
+    authenticationMode: identityProvider.authenticationMode,
+    applicationOrigin: process.env.LABS_APPLICATION_ORIGIN
+  });
   const path = url.pathname;
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: store.listProjects() });
@@ -100,7 +103,7 @@ async function staticFile(req, res, url) {
   if (relativePath.startsWith("..") || relativePath === "" || relativePath === "data" || relativePath.startsWith(`data${sep}`)) return respond(res, 403, { error: { code: "FORBIDDEN", message: "Not available." } });
   try {
     const file = await readFile(resolved);
-    res.writeHead(200, { "content-type": contentTypes[extname(resolved)] || "application/octet-stream", ...responseSecurityHeaders, "content-security-policy": "default-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'" });
+    res.writeHead(200, { "content-type": contentTypes[extname(resolved)] || "application/octet-stream", ...responseSecurityHeaders });
     res.end(file);
   } catch { respond(res, 404, { error: { code: "NOT_FOUND", message: "Page not found." } }); }
 }
