@@ -20,10 +20,28 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("tenant-scope migration makes each core record organization-bound", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "003_organization_tenant_scope");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS organizations/);
+
+  for (const table of ["users", "cycles", "projects", "project_gates", "evidence_entries", "project_reviews", "decisions", "approvals", "handoffs", "audit_events"]) {
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN organization_id TEXT;`));
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ALTER COLUMN organization_id SET NOT NULL;`));
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table}\\n  ADD CONSTRAINT ${table}_organization_fk FOREIGN KEY \\(organization_id\\) REFERENCES organizations\\(id\\)`));
+  }
+
+  assert.match(migration.sql, /projects_cycle_organization_fk FOREIGN KEY \(cycle_id, organization_id\) REFERENCES cycles\(id, organization_id\)/);
+  assert.match(migration.sql, /audit_events_actor_organization_fk FOREIGN KEY \(actor_id, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.match(migration.sql, /audit_events_organization_created_idx ON audit_events \(organization_id, created_at DESC\)/);
+  assert.match(migration.sql, /Cannot add tenant scope to a populated pre-production schema/);
+  assert.doesNotMatch(migration.sql, /INSERT INTO organizations/i);
 });
 
 test("migration runner records applied checksums and skips tracked migrations", async () => {

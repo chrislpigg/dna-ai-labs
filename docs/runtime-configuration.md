@@ -65,7 +65,15 @@ Run migrations only against a company-approved PostgreSQL database, with the dep
 LABS_DATABASE_URL='postgresql://…' npm run migrate
 ```
 
-The command refuses `LABS_DEMO_MODE=true`, does not echo the URL, and never creates a SQLite fallback. The initial schema contains program metadata and approved-link references only, and it enforces append-only audit events at the database layer. This command creates the schema; it does not make the production HTTP runtime ready until tenant isolation, the PostgreSQL storage adapter, and the other required production adapters are configured.
+The command refuses `LABS_DEMO_MODE=true`, does not echo the URL, and never creates a SQLite fallback. The schema contains program metadata and approved-link references only, enforces append-only audit events at the database layer, and requires every authoritative workflow record (including audit events) to carry an organization scope.
+
+### Tenant-schema migration path
+
+Demo SQLite data is not a production migration source. Provision an empty, company-approved PostgreSQL database, run the tracked migrations, and use the authorized tenant-bootstrap path to create the organization identified by `LABS_TENANT_ID` before serving requests. Do not export, copy, or relabel seeded demo users, projects, decisions, or audit records.
+
+The organization-scope migration deliberately stops if the earlier production schema contains any workflow rows, because it cannot safely infer an organization for those records. Treat that failure as a deployment blocker: provision a clean database or obtain an approved, separately reviewed data-migration plan with explicit tenant assignments. Do not bypass the check or assign a catch-all tenant.
+
+This command creates the schema; it does not make the production HTTP runtime ready until the PostgreSQL storage adapter and the other required production adapters are configured.
 
 ## Diagnostics
 
