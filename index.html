@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111b2e" />
+    <title>DNA AI Labs — Command Center</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="DNA AI Labs home">
+          <span class="brand-mark"><i></i><i></i><i></i></span>
+          <span><strong>DNA</strong> AI Labs<small>Command Center</small></span>
+        </a>
+
+        <nav aria-label="Main navigation">
+          <a class="nav-link active" href="#overview" data-view="overview"><span>◉</span> Portfolio</a>
+          <a class="nav-link" href="#intake" data-view="intake"><span>＋</span> New intake</a>
+          <a class="nav-link" href="#cadence" data-view="cadence"><span>↗</span> 90-day launch</a>
+          <a class="nav-link" href="#playbook" data-view="playbook"><span>▤</span> Playbook</a>
+          <a class="nav-link" href="#audit" data-view="audit" id="audit-nav" hidden><span>⌁</span> Audit log</a>
+        </nav>
+
+        <section class="sidebar-cycle">
+          <p class="eyebrow">Cycle 01 · 2026</p>
+          <h2>Engineering quality &amp; inclusion</h2>
+          <div class="progress-track"><span></span></div>
+          <p>Discovery → selection</p>
+        </section>
+
+        <p class="sidebar-security">Server-owned state<br />Audited decisions</p>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="page-kicker">Incubation portfolio</p>
+            <h1 id="page-title">Make useful things travel.</h1>
+          </div>
+          <div class="topbar-actions">
+            <span class="data-note" id="identity-note">Loading secure session…</span>
+            <label class="demo-actor" id="demo-actor-wrap" hidden>Demo role<select id="demo-actor"><option value="lab-lead">Lab lead</option><option value="executive-sponsor">Executive sponsor</option><option value="platform-reviewer">Platform reviewer</option><option value="receiving-owner">Receiving owner</option><option value="accessibility-lead">Project lead</option></select></label>
+            <button class="button button-primary" data-open-intake>+ Submit a problem</button>
+          </div>
+        </header>
+
+        <section id="overview" class="view active" aria-labelledby="page-title">
+          <div class="north-star">
+            <div class="star-icon">✦</div>
+            <div><p class="eyebrow">North star</p><p>Reusable internal products adopted outside the team that created them.</p></div>
+            <button class="button button-ghost" data-open-intake>Start an intake <span>→</span></button>
+          </div>
+
+          <div class="metric-grid" aria-label="Portfolio summary">
+            <article><p class="metric-label">Active projects</p><p class="metric-value" id="active-count">03</p><p class="metric-detail">In the current cycle</p></article>
+            <article><p class="metric-label">Adoption paths named</p><p class="metric-value" id="owner-count">02<span>/03</span></p><p class="metric-detail">A required selection gate</p></article>
+            <article><p class="metric-label">Potential reach</p><p class="metric-value" id="reach-count">14<span> teams</span></p><p class="metric-detail">If pilots prove useful</p></article>
+            <article><p class="metric-label">Next decision</p><p class="metric-value metric-date">Jul 18</p><p class="metric-detail">Portfolio selection session</p></article>
+          </div>
+
+          <div class="section-heading">
+            <div><p class="eyebrow">The work</p><h2>Portfolio at a glance</h2></div>
+            <div class="filters" role="group" aria-label="Filter portfolio">
+              <button class="filter active" data-filter="all">All</button>
+              <button class="filter" data-filter="Triage">Triage</button>
+              <button class="filter" data-filter="Incubating">Incubating</button>
+              <button class="filter" data-filter="Decision pending">Decision pending</button>
+              <button class="filter" data-filter="Transferred">Transferred</button>
+            </div>
+          </div>
+          <div id="project-grid" class="project-grid"></div>
+
+          <section class="decision-panel">
+            <div class="decision-copy"><p class="eyebrow">Decision discipline</p><h2>A demo is not the finish line.</h2><p>Every project exits the Lab with a real decision and a named accountable owner.</p></div>
+            <div class="decision-outcomes">
+              <span><b>01</b> Scale</span><span><b>02</b> Transfer</span><span><b>03</b> Extend once</span><span><b>04</b> Sunset</span>
+            </div>
+          </section>
+        </section>
+
+        <section id="intake" class="view" aria-label="New project intake">
+          <div class="content-intro"><p class="eyebrow">Lab intake</p><h2>Bring a company problem, not an AI idea.</h2><p>The Lab will help refine promising submissions. Selection requires an adoption path and an outcome we can measure during a 6–8 week pilot.</p></div>
+          <form id="intake-form" class="intake-form">
+            <div class="form-section"><p class="form-number">01</p><div><h3>The problem</h3><p>Describe the recurring work or friction in plain language.</p></div></div>
+            <div class="form-grid">
+              <label>Working title<input required name="title" placeholder="e.g. Release readiness assistant" /></label>
+              <label>Originating team<input required name="originTeam" placeholder="e.g. Developer Experience" /></label>
+              <label class="wide">Problem statement<textarea required name="problem" placeholder="What happens today, who feels it, and what does it cost?"></textarea></label>
+              <label>Target users<input required name="users" placeholder="e.g. Engineering managers" /></label>
+              <label>Potential company reach<input required name="reach" type="number" min="1" placeholder="Number of teams" /></label>
+            </div>
+            <div class="form-section"><p class="form-number">02</p><div><h3>Evidence and outcome</h3><p>Tell us how this gets real enough to decide.</p></div></div>
+            <div class="form-grid">
+              <label>Primary success metric<input required name="metric" placeholder="e.g. Time to complete release review" /></label>
+              <label>Current baseline<input required name="baseline" placeholder="e.g. 4 hours" /></label>
+              <label>Target outcome<input required name="target" placeholder="e.g. 2 hours" /></label>
+              <label>Metric source<input required name="metricSource" placeholder="e.g. Release tracker" /></label>
+            </div>
+            <div class="form-section"><p class="form-number">03</p><div><h3>Make it adoptable</h3><p>These are the two gates to selection.</p></div></div>
+            <div class="form-grid">
+              <label>Metric owner<select required name="metricOwnerId" required><option value="">Select an owner</option><option value="accessibility-lead">Avery Accessibility</option><option value="ube-lead">Uma UBE</option><option value="lab-lead">Morgan Lab Lead</option></select></label>
+              <label>Sponsor<select required name="sponsorId" required><option value="">Select a sponsor</option><option value="executive-sponsor">Jordan Executive Sponsor</option></select></label>
+              <label>Proposed long-term owner<select required name="receivingOwnerId" required><option value="">Select an owner</option><option value="receiving-owner">Riley Receiving Owner</option></select></label>
+              <label>Project lead<select required name="projectLeadId" required><option value="">Select a lead</option><option value="accessibility-lead">Avery Accessibility</option><option value="ube-lead">Uma UBE</option></select></label>
+              <label>Data classification<select required name="risk"><option value="Internal">Internal</option><option value="Confidential business">Confidential business</option><option value="Restricted metadata">Restricted metadata</option></select></label>
+              <label>Transfer target<input required name="transfer" type="date" /></label>
+            </div>
+            <div class="selection-gates"><label><input required type="checkbox" name="adoption" /> <span><b>Adoption gate</b>I have discussed a plausible receiving owner and external users.</span></label><label><input required type="checkbox" name="evidence" /> <span><b>Evidence gate</b>We can measure a user or business outcome during the pilot.</span></label></div>
+            <div class="form-actions"><p>Submissions are stored on the Lab service and create an auditable intake record. Do not include sensitive source data.</p><button class="button button-primary" type="submit">Submit for triage <span>→</span></button></div>
+          </form>
+        </section>
+
+        <section id="cadence" class="view" aria-label="90-day launch plan">
+          <div class="content-intro"><p class="eyebrow">Cycle 01</p><h2>The first 90 days</h2><p>Build the habit of proof, transfer, and visible decisions before expanding the program.</p></div>
+          <div class="timeline">
+            <article><div class="timeline-time">Days 01–15</div><div><p class="eyebrow">Establish the mandate</p><h3>Make the Labs real</h3><ul><li>Confirm sponsor and steering group.</li><li>Publish the charter and selection rubric.</li><li>Announce the first theme and intake window.</li><li>Schedule AI Day, demo, and decision forums.</li></ul><p class="exit"><b>Exit:</b> Sponsor approval and a published intake.</p></div></article>
+            <article><div class="timeline-time">Days 16–30</div><div><p class="eyebrow">Build the first portfolio</p><h3>Select for adoption, not novelty</h3><ul><li>Run AI Day and problem-refinement office hours.</li><li>Capture Accessibility and UBE baselines.</li><li>Select no more than three projects.</li><li>Name pilot users, owners, and risk paths.</li></ul><p class="exit"><b>Exit:</b> Every project has a sponsor, baseline, and consulted owner.</p></div></article>
+            <article><div class="timeline-time">Days 31–75</div><div><p class="eyebrow">Incubate with real users</p><h3>Turn evidence into a decision</h3><ul><li>Run weekly pilot reviews and biweekly unblock sessions.</li><li>Give Fellows a delivery or adoption responsibility.</li><li>Begin reviews early; measure continuously.</li><li>Start the transfer kit as soon as adoption is credible.</li></ul><p class="exit"><b>Exit:</b> A real-user result and a recommended decision.</p></div></article>
+            <article><div class="timeline-time">Days 76–90</div><div><p class="eyebrow">Decide in public</p><h3>Make useful work travel</h3><ul><li>Demo outcome and adoption evidence—not model novelty.</li><li>Scale, transfer, extend once, or sunset every project.</li><li>Record ownership, support bounds, and next-cycle learnings.</li><li>Recognize Fellows and partner teams.</li></ul><p class="exit"><b>Exit:</b> A documented outcome for every project.</p></div></article>
+          </div>
+        </section>
+
+        <section id="playbook" class="view" aria-label="Playbook">
+          <div class="content-intro"><p class="eyebrow">Operating playbook</p><h2>Small rules that protect the signal.</h2><p>Use the Labs to turn local expertise into company-wide leverage—without becoming a shadow platform team.</p></div>
+          <div class="playbook-grid">
+            <article><span class="playbook-number">01</span><h3>Start with a problem</h3><p>Measure a painful current workflow. The AI mechanism is secondary to the result.</p></article>
+            <article><span class="playbook-number">02</span><h3>Name the next owner early</h3><p>A prototype has no path to selection without a team that could operate it.</p></article>
+            <article><span class="playbook-number">03</span><h3>Design for transfer</h3><p>Package architecture, evaluation, cost, safety, onboarding, and a bounded support model.</p></article>
+            <article><span class="playbook-number">04</span><h3>Credit the system</h3><p>Partner visibly with central AI and platform teams. The brand is connective leadership.</p></article>
+          </div>
+          <div class="demo-checklist"><div><p class="eyebrow">Executive decision demo</p><h3>Six things to show</h3></div><ol><li>User problem and company relevance</li><li>Baseline versus pilot result</li><li>Short demo or user evidence</li><li>Adoption evidence and receiving owner</li><li>Risk and operating-cost status</li><li>A precise requested decision</li></ol></div>
+        </section>
+
+        <section id="audit" class="view" aria-label="Audit log">
+          <div class="content-intro"><p class="eyebrow">Governance record</p><h2>Audit log</h2><p>Read-only activity history for authorized program leaders. Decisions and approvals are preserved as events; corrections require a new, linked action.</p></div>
+          <div id="audit-events" class="audit-events" aria-live="polite"><p>Loading audit events…</p></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="project-dialog" aria-labelledby="dialog-title">
+      <button class="dialog-close" aria-label="Close details">×</button>
+      <div id="dialog-content"></div>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
