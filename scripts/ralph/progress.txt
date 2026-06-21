@@ -47,4 +47,12 @@ Started: 2026-06-20
 - Verification: `npm test` (30 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because required production runtime configuration is absent.
 - Reusable learning: treat CSRF as a property of cookie credentials, not a blanket replacement for bearer-token verification; apply the same CSP and security headers to JSON error responses as to static assets.
 
+## 2026-06-20 — US-006 Define production storage port
+
+- Added `src/storage-port.mjs` with an explicit persistence contract for users, projects, decisions, audit events, and transactions. `WorkflowService` now owns lifecycle, authorization, gate, approval, handoff, and audit orchestration without importing SQLite.
+- Refactored `LabsStore` into a compatibility facade over `WorkflowService` and the demo-only `SqliteLabsStorage` adapter. Existing workflow tests therefore continue to exercise the SQLite demo/test adapter through the same public API.
+- Added storage-port contract coverage and syntax checks. Files changed: `src/storage-port.mjs`, `src/workflow-service.mjs`, `src/labs-store.mjs`, `test/storage-port.test.mjs`, and `package.json`.
+- Verification: `npm test` (32 passing) and `npm run check` passed. Vercel CLI authentication and linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required explicit production runtime configuration is absent.
+- Reusable learning: model the persistence boundary with domain operations and transaction ownership, so storage adapters can change without weakening server-owned workflow policy or durable audit behavior.
+
 ---

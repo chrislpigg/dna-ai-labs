@@ -15,6 +15,7 @@ import {
   reviewTypes,
   stages
 } from "./workflow-policy.mjs";
+import { WorkflowService } from "./workflow-service.mjs";
 
 const now = () => new Date().toISOString();
 const json = value => JSON.stringify(value ?? {});
@@ -43,7 +44,8 @@ const seedProjects = [
   }
 ];
 
-export class LabsStore {
+/** SQLite persistence adapter. Demo and tests only; workflow rules live in WorkflowService. */
+export class SqliteLabsStorage {
   constructor(file, { approvedArtifactOrigins = ["https://intranet.example"] } = {}) {
     mkdirSync(dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
@@ -447,9 +449,121 @@ export class LabsStore {
       .map(event => ({ ...event, before: event.beforeJson ? parse(event.beforeJson) : null, after: event.afterJson ? parse(event.afterJson) : null, beforeJson: undefined, afterJson: undefined }));
   }
 
+  // Storage port implementation. These methods deliberately contain only
+  // persistence concerns; WorkflowService owns authorization and transitions.
+  getActor(id) { return this.actor(id); }
+  listUsers() { return this.users(); }
+  getProject(id) { return this.project(id); }
+  listProjects() {
+    const rows = this.db.prepare(`SELECT p.*, sponsor.name AS sponsor_name, receiver.name AS receiving_owner_name, lead.name AS project_lead_name
+      FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
+      JOIN users lead ON lead.id = p.project_lead_id ORDER BY p.updated_at DESC`).all();
+    return rows.map(row => this.serializeProject(row));
+  }
+  appendAudit(actorId, action, entityType, entityId, before, after) { this.audit(actorId, action, entityType, entityId, before, after); }
+
+  transaction(work) {
+    this.db.exec("BEGIN");
+    try { const result = work(); this.db.exec("COMMIT"); return result; }
+    catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  insertProject(project) {
+    this.db.prepare(`INSERT INTO projects (
+      id, cycle_id, title, stage, origin_team, target_users, potential_reach, problem, metric, baseline, target, metric_source, metric_owner_id,
+      sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, created_at, created_by, updated_at, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(project.id, project.cycleId, project.title, project.stage, project.originTeam, project.users, project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource, project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification, project.transferDate, project.sharedPlatformImpact ? 1 : 0, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy);
+  }
+
+  updateProjectStage(id, stage, actorId, timestamp) {
+    this.db.prepare("UPDATE projects SET stage = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(stage, timestamp, actorId, id);
+  }
+
+  acknowledgeProjectAdoption(projectId, actorId, timestamp) {
+    this.db.prepare("UPDATE projects SET adoption_acknowledged_by = ?, adoption_acknowledged_at = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(actorId, timestamp, timestamp, actorId, projectId);
+  }
+
+  upsertGate(gate) {
+    this.db.prepare(`INSERT INTO project_gates (project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, gate_key) DO UPDATE SET status = excluded.status, evidence_link = excluded.evidence_link, completed_by = excluded.completed_by, completed_at = excluded.completed_at, exception_reason = excluded.exception_reason`)
+      .run(gate.projectId, gate.key, gate.status, gate.evidenceLink, gate.completedBy, gate.completedAt, gate.exceptionReason);
+  }
+
+  insertEvidence(evidence) {
+    this.db.prepare("INSERT INTO evidence_entries (id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(evidence.id, evidence.projectId, evidence.evidenceType, evidence.result, evidence.sampleSize, evidence.confidence, evidence.sourceLink, evidence.observedAt, evidence.createdBy, evidence.createdAt);
+  }
+
+  upsertReview(review) {
+    this.db.prepare(`INSERT INTO project_reviews (project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, review_type) DO UPDATE SET status = excluded.status, evidence_link = excluded.evidence_link, completed_by = excluded.completed_by, completed_at = excluded.completed_at, exception_reason = excluded.exception_reason`)
+      .run(review.projectId, review.reviewType, review.status, review.evidenceLink, review.completedBy, review.completedAt, review.exceptionReason);
+  }
+
+  listReviews(projectId) {
+    return this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(projectId);
+  }
+
+  getHandoff(projectId) {
+    const handoff = this.db.prepare("SELECT project_id AS projectId, receiving_owner_id AS receivingOwnerId, status, adoption_plan_link AS adoptionPlanLink, support_end_date AS supportEndDate, follow_up_date AS followUpDate, onboarding_acknowledged AS onboardingAcknowledged, accepted_by AS acceptedBy, accepted_at AS acceptedAt FROM handoffs WHERE project_id = ?").get(projectId);
+    return handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null;
+  }
+
+  upsertHandoff(handoff) {
+    this.db.prepare(`INSERT INTO handoffs (project_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date, onboarding_acknowledged, accepted_by, accepted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET status = excluded.status, adoption_plan_link = excluded.adoption_plan_link, support_end_date = excluded.support_end_date, follow_up_date = excluded.follow_up_date, onboarding_acknowledged = excluded.onboarding_acknowledged, accepted_by = excluded.accepted_by, accepted_at = excluded.accepted_at`)
+      .run(handoff.projectId, handoff.receivingOwnerId, handoff.status, handoff.adoptionPlanLink, handoff.supportEndDate, handoff.followUpDate, handoff.onboardingAcknowledged ? 1 : 0, handoff.acceptedBy, handoff.acceptedAt);
+  }
+
+  findOpenDecision(projectId) { return this.db.prepare("SELECT id FROM decisions WHERE project_id = ? AND status IN ('requested', 'approved')").get(projectId) || null; }
+
+  insertDecision(decision) {
+    this.db.prepare("INSERT INTO decisions (id, project_id, outcome, rationale, status, requested_by, requested_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(decision.id, decision.projectId, decision.outcome, decision.rationale, decision.status, decision.requestedBy, decision.requestedAt);
+  }
+
+  getDecision(id) {
+    const decision = this.db.prepare("SELECT * FROM decisions WHERE id = ?").get(id);
+    return decision ? { id: decision.id, projectId: decision.project_id, outcome: decision.outcome, rationale: decision.rationale, status: decision.status, requestedBy: decision.requested_by, requestedAt: decision.requested_at, finalizedBy: decision.finalized_by, finalizedAt: decision.finalized_at } : null;
+  }
+
+  listApprovals(decisionId) {
+    return this.db.prepare("SELECT approver_id AS approverId, approver_role AS approverRole, result, comment, created_at AS createdAt FROM approvals WHERE decision_id = ? ORDER BY created_at").all(decisionId);
+  }
+
+  insertApproval(approval) {
+    this.db.prepare("INSERT INTO approvals (id, decision_id, approver_id, approver_role, result, comment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(approval.id, approval.decisionId, approval.approverId, approval.approverRole, approval.result, approval.comment, approval.createdAt);
+  }
+
+  rejectDecision(id, actorId, timestamp, projectId, stage) {
+    this.db.prepare("UPDATE decisions SET status = 'rejected', finalized_by = ?, finalized_at = ? WHERE id = ?").run(actorId, timestamp, id);
+    this.updateProjectStage(projectId, stage, actorId, timestamp);
+  }
+
+  finalizeDecision(id, actorId, timestamp, projectId, stage, extensionIncrement) {
+    this.db.prepare("UPDATE projects SET stage = ?, extension_count = extension_count + ?, updated_at = ?, updated_by = ? WHERE id = ?").run(stage, extensionIncrement, timestamp, actorId, projectId);
+    this.db.prepare("UPDATE decisions SET status = 'finalized', finalized_by = ?, finalized_at = ? WHERE id = ?").run(actorId, timestamp, id);
+  }
+
+  listAuditEvents(limit) {
+    return this.db.prepare("SELECT id, actor_id AS actorId, action, entity_type AS entityType, entity_id AS entityId, before_json AS beforeJson, after_json AS afterJson, created_at AS createdAt FROM audit_events ORDER BY created_at DESC LIMIT ?").all(limit)
+      .map(event => ({ ...event, before: event.beforeJson ? parse(event.beforeJson) : null, after: event.afterJson ? parse(event.afterJson) : null, beforeJson: undefined, afterJson: undefined }));
+  }
+
   health() {
     return this.db.prepare("SELECT 1 AS ok").get().ok === 1;
   }
 
   close() { this.db.close(); }
+}
+
+/** Compatibility facade used by the HTTP runtime and existing tests. */
+export class LabsStore extends WorkflowService {
+  constructor(file, options = {}) {
+    const storage = new SqliteLabsStorage(file, options);
+    super(storage, options);
+  }
+
+  health() { return this.storage.health(); }
+  close() { this.storage.close(); }
 }
