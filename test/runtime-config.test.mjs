@@ -10,6 +10,18 @@ const productionEnvironment = {
   LABS_DATABASE_URL: "postgresql://configured-by-platform/dna_ai_labs",
   LABS_TENANT_ID: "company-internal",
   LABS_TENANT_CLAIM: "organization_id",
+  LABS_GROUP_ROLE_MAPPING: JSON.stringify({
+    employee: ["group-employee"],
+    submitter: ["group-submitter"],
+    "project-lead": ["group-project-lead"],
+    fellow: ["group-fellow"],
+    "receiving-owner": ["group-receiving-owner"],
+    "steering-reviewer": ["group-steering-reviewer"],
+    "lab-lead": ["group-lab-lead"],
+    "executive-sponsor": ["group-executive-sponsor"],
+    "platform-reviewer": ["group-platform-reviewer"],
+    admin: ["group-admin"]
+  }),
   LABS_ALLOWED_ARTIFACT_ORIGINS: "https://docs.example, https://source.example",
   LABS_NOTIFICATION_PROVIDER: "approved-provider",
   LABS_DIRECTORY_PROVIDER: "approved-provider",
@@ -28,6 +40,7 @@ test("production configuration reports missing contracts without exposing values
   assert.equal(result.valid, false);
   assert.ok(result.issues.includes("missing_oidc_audience"));
   assert.ok(result.issues.includes("missing_tenant_id"));
+  assert.ok(result.issues.includes("missing_group_role_mapping"));
   assert.equal(JSON.stringify(result).includes("secret"), false);
   assert.equal(JSON.stringify(result).includes("identity.example"), false);
 });
@@ -52,6 +65,16 @@ test("OIDC issuer and JWKS configuration require HTTPS URLs", () => {
   assert.ok(result.issues.includes("invalid_oidc_issuer"));
   assert.ok(result.issues.includes("invalid_oidc_jwks_url"));
   assert.equal(JSON.stringify(result).includes("identity.example"), false);
+});
+
+test("production configuration rejects incomplete or overlapping group role mappings", () => {
+  const incomplete = validateRuntimeConfiguration({ ...productionEnvironment, LABS_GROUP_ROLE_MAPPING: JSON.stringify({ employee: ["employees"] }) });
+  assert.equal(incomplete.valid, false);
+  assert.ok(incomplete.issues.includes("invalid_group_role_mapping"));
+
+  const overlapping = validateRuntimeConfiguration({ ...productionEnvironment, LABS_GROUP_ROLE_MAPPING: productionEnvironment.LABS_GROUP_ROLE_MAPPING.replace("group-submitter", "group-employee") });
+  assert.equal(overlapping.valid, false);
+  assert.ok(overlapping.issues.includes("invalid_group_role_mapping"));
 });
 
 test("demo mode is explicit and remains non-ready", () => {

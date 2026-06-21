@@ -4,6 +4,7 @@ import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LabsStore } from "./src/labs-store.mjs";
 import { createIdentityProvider } from "./src/identity-provider.mjs";
+import { demoGroupRoleMapping, parseGroupRoleMapping, resolveApplicationRole } from "./src/role-mapping.mjs";
 import { WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
 
@@ -11,6 +12,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const isVercel = Boolean(process.env.VERCEL);
 const runtimeConfiguration = validateRuntimeConfiguration(process.env);
 const demoMode = runtimeConfiguration.demoMode;
+const groupRoleMapping = demoMode ? demoGroupRoleMapping() : parseGroupRoleMapping(process.env.LABS_GROUP_ROLE_MAPPING);
 const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
 const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins }) : null;
 const demoIdentities = demoMode ? Object.fromEntries(store.users().map(user => [user.id, {
@@ -56,7 +58,8 @@ async function body(req) {
 async function actor(req) {
   const identity = await identityProvider.authenticate(req);
   requireOperationalRuntime();
-  return { ...store.actor(identity.subject), identity };
+  const role = resolveApplicationRole(identity.groups, groupRoleMapping);
+  return { ...store.actor(identity.subject), role, identity };
 }
 
 async function api(req, res, url) {

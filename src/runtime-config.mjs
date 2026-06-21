@@ -1,3 +1,5 @@
+import { parseGroupRoleMapping } from "./role-mapping.mjs";
+
 const requiredProductionVariables = Object.freeze([
   ["LABS_OIDC_ISSUER", "missing_oidc_issuer"],
   ["LABS_OIDC_AUDIENCE", "missing_oidc_audience"],
@@ -6,6 +8,7 @@ const requiredProductionVariables = Object.freeze([
   ["LABS_DATABASE_URL", "missing_database_url"],
   ["LABS_TENANT_ID", "missing_tenant_id"],
   ["LABS_TENANT_CLAIM", "missing_tenant_claim"],
+  ["LABS_GROUP_ROLE_MAPPING", "missing_group_role_mapping"],
   ["LABS_ALLOWED_ARTIFACT_ORIGINS", "missing_approved_artifact_origins"],
   ["LABS_NOTIFICATION_PROVIDER", "missing_notification_provider"],
   ["LABS_DIRECTORY_PROVIDER", "missing_directory_provider"],
@@ -45,6 +48,7 @@ function approvedArtifactOrigins(value) {
 export function validateRuntimeConfiguration(env = process.env) {
   const demoMode = text(env.LABS_DEMO_MODE) === "true";
   const artifactOrigins = approvedArtifactOrigins(env.LABS_ALLOWED_ARTIFACT_ORIGINS);
+  const groupRoleMapping = parseGroupRoleMapping(env.LABS_GROUP_ROLE_MAPPING);
   const issues = [];
 
   if (!demoMode) {
@@ -56,6 +60,7 @@ export function validateRuntimeConfiguration(env = process.env) {
     if (text(env.LABS_ALLOWED_ARTIFACT_ORIGINS) && !artifactOrigins.valid) {
       issues.push("invalid_approved_artifact_origins");
     }
+    if (text(env.LABS_GROUP_ROLE_MAPPING) && !groupRoleMapping) issues.push("invalid_group_role_mapping");
   }
 
   return Object.freeze({

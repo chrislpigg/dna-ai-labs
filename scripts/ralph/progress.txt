@@ -31,4 +31,12 @@ Started: 2026-06-20
 - Verification: `npm test` (21 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required production configuration is absent.
 - Reusable learning: mutate a significant decoded signature byte when testing JWS signature rejection; a change only to unused base64url padding bits may leave the decoded signature unchanged.
 
+## 2026-06-20 — US-004 Map verified groups to application roles
+
+- Added a strict `LABS_GROUP_ROLE_MAPPING` production contract that maps every application role to approved verified OIDC groups. Mappings must be complete and groups cannot be shared between roles; identities with no match or more than one match are denied.
+- Routed request actors through the verified-group role resolver. The persisted demo user record supplies only display metadata; its role no longer determines request authorization. Demo identity switching remains available only under explicit `LABS_DEMO_MODE=true` and production ignores its header.
+- Added mapping and configuration tests, syntax coverage, and operator documentation. Files changed: `src/role-mapping.mjs`, `server.mjs`, `src/runtime-config.mjs`, `test/role-mapping.test.mjs`, `test/runtime-config.test.mjs`, `package.json`, `README.md`, and `docs/runtime-configuration.md`.
+- Verification: `npm test` (26 passing) and `npm run check` passed. Vercel CLI credentials and linkage are available, but `npx vercel env ls preview` reported `No Environment Variables found`; no preview was created because the required production configuration contract is absent.
+- Reusable learning: resolve a single server-owned role from verified claims and reject overlaps explicitly; selecting a more privileged role from a multi-group identity silently converts group configuration drift into privilege escalation.
+
 ---

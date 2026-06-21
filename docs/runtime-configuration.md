@@ -17,6 +17,7 @@ Never place raw member, DNA, health, family-history, employee, access-token, or 
 | `LABS_DATABASE_URL` | Company-managed PostgreSQL connection URL. | Secret; diagnostics report only that it is missing. |
 | `LABS_TENANT_ID` | Authoritative organization/tenant identifier. | Identifier, not displayed by diagnostics. |
 | `LABS_TENANT_CLAIM` | Verified identity claim that carries tenant scope. | Claim name, not displayed by diagnostics. |
+| `LABS_GROUP_ROLE_MAPPING` | JSON object that maps each application role to its approved, verified IdP groups. | Non-secret policy configuration; it must define every role exactly once and groups cannot be reused across roles. |
 | `LABS_ALLOWED_ARTIFACT_ORIGINS` | Comma-separated HTTPS origins permitted for approved document/source/evidence links. | Origins only; each entry must be an exact HTTPS origin, such as `https://docs.company.example`. |
 | `LABS_NOTIFICATION_PROVIDER` | Approved notification-provider selection. | Provider label only; provider credentials remain in the platform secret store. |
 | `LABS_DIRECTORY_PROVIDER` | Approved directory-provider selection. | Provider label only. |
@@ -25,6 +26,25 @@ Never place raw member, DNA, health, family-history, employee, access-token, or 
 | `LABS_ANALYTICS_PROVIDER` | Approved analytics-provider selection. | Provider label only. |
 
 Provider-specific endpoints, credentials, CA material, signing keys, and client secrets must be supplied through the approved deployment secret mechanism once each adapter is implemented. Do not commit or print their values. The provider selection variables are configuration contracts; no vendor endpoint is inferred by the service.
+
+`LABS_GROUP_ROLE_MAPPING` has this shape; replace these examples with the approved groups, never with user-controlled claims:
+
+```json
+{
+  "employee": ["approved-employee-group"],
+  "submitter": ["approved-submitter-group"],
+  "project-lead": ["approved-project-lead-group"],
+  "fellow": ["approved-fellow-group"],
+  "receiving-owner": ["approved-receiving-owner-group"],
+  "steering-reviewer": ["approved-steering-reviewer-group"],
+  "lab-lead": ["approved-lab-lead-group"],
+  "executive-sponsor": ["approved-executive-sponsor-group"],
+  "platform-reviewer": ["approved-platform-reviewer-group"],
+  "admin": ["approved-program-administrator-group"]
+}
+```
+
+The server resolves roles only from verified OIDC group claims. An identity with no mapped group is denied; an identity matching more than one role is also denied so mappings cannot silently combine privileges. The browser can switch seeded identities only when `LABS_DEMO_MODE=true`; production ignores its demo identity header.
 
 ## Demo-only variables
 
