@@ -16,6 +16,7 @@ import {
   stages
 } from "./workflow-policy.mjs";
 import { WorkflowService } from "./workflow-service.mjs";
+import { retentionClassification, retentionUntil } from "./retention-policy.mjs";
 
 const now = () => new Date().toISOString();
 const json = value => JSON.stringify(value ?? {});
@@ -91,7 +92,7 @@ export class SqliteLabsStorage {
       );
       CREATE TABLE IF NOT EXISTS decisions (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, outcome TEXT NOT NULL, rationale TEXT NOT NULL, status TEXT NOT NULL,
-        requested_by TEXT NOT NULL, requested_at TEXT NOT NULL, finalized_by TEXT, finalized_at TEXT, FOREIGN KEY(project_id) REFERENCES projects(id)
+        requested_by TEXT NOT NULL, requested_at TEXT NOT NULL, finalized_by TEXT, finalized_at TEXT, retention_classification TEXT, retention_until TEXT, FOREIGN KEY(project_id) REFERENCES projects(id)
       );
       CREATE TABLE IF NOT EXISTS approvals (
         id TEXT PRIMARY KEY, decision_id TEXT NOT NULL, approver_id TEXT NOT NULL, approver_role TEXT NOT NULL,
@@ -105,7 +106,7 @@ export class SqliteLabsStorage {
       );
       CREATE TABLE IF NOT EXISTS audit_events (
         id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
-        before_json TEXT, after_json TEXT, created_at TEXT NOT NULL
+        before_json TEXT, after_json TEXT, created_at TEXT NOT NULL, retention_classification TEXT NOT NULL DEFAULT 'program_record', retention_until TEXT NOT NULL
       );
     `);
     this.ensureColumn("projects", "adoption_acknowledged_by", "TEXT");
@@ -113,6 +114,10 @@ export class SqliteLabsStorage {
     this.ensureColumn("projects", "deleted_at", "TEXT");
     this.ensureColumn("projects", "deleted_by", "TEXT");
     this.ensureColumn("projects", "deletion_reason", "TEXT");
+    this.ensureColumn("decisions", "retention_classification", "TEXT");
+    this.ensureColumn("decisions", "retention_until", "TEXT");
+    this.ensureColumn("audit_events", "retention_classification", "TEXT");
+    this.ensureColumn("audit_events", "retention_until", "TEXT");
   }
 
   ensureColumn(table, column, definition) {
@@ -149,8 +154,9 @@ export class SqliteLabsStorage {
   }
 
   audit(actorId, action, entityType, entityId, before, after) {
-    this.db.prepare("INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), actorId, action, entityType, entityId, before ? json(before) : null, after ? json(after) : null, now());
+    const timestamp = now();
+    this.db.prepare("INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, before_json, after_json, created_at, retention_classification, retention_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), actorId, action, entityType, entityId, before ? json(before) : null, after ? json(after) : null, timestamp, retentionClassification, retentionUntil(timestamp));
   }
 
   project(id) {
@@ -497,6 +503,10 @@ export class SqliteLabsStorage {
       .run(timestamp, actorId, reason, timestamp, actorId, id);
   }
 
+  projectRetentionUntil(id) {
+    return this.db.prepare("SELECT retention_until FROM decisions WHERE project_id = ? AND status = 'finalized' AND retention_until IS NOT NULL ORDER BY retention_until DESC LIMIT 1").get(id)?.retention_until || null;
+  }
+
   restoreProject(id, actorId, timestamp) {
     this.db.prepare("UPDATE projects SET deleted_at = NULL, deleted_by = NULL, deletion_reason = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NOT NULL")
       .run(timestamp, actorId, id);
@@ -562,9 +572,9 @@ export class SqliteLabsStorage {
     this.updateProjectStage(projectId, stage, actorId, timestamp);
   }
 
-  finalizeDecision(id, actorId, timestamp, projectId, stage, extensionIncrement) {
+  finalizeDecision(id, actorId, timestamp, projectId, stage, extensionIncrement, retentionUntilValue) {
     this.db.prepare("UPDATE projects SET stage = ?, extension_count = extension_count + ?, updated_at = ?, updated_by = ? WHERE id = ?").run(stage, extensionIncrement, timestamp, actorId, projectId);
-    this.db.prepare("UPDATE decisions SET status = 'finalized', finalized_by = ?, finalized_at = ? WHERE id = ?").run(actorId, timestamp, id);
+    this.db.prepare("UPDATE decisions SET status = 'finalized', finalized_by = ?, finalized_at = ?, retention_classification = ?, retention_until = ? WHERE id = ?").run(actorId, timestamp, retentionClassification, retentionUntilValue, id);
   }
 
   listAuditEvents(limit) {

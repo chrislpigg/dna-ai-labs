@@ -8,7 +8,7 @@
     "start:secure": "node server.mjs",
     "migrate": "node scripts/migrate.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check scripts/migrate.mjs && node --check src/database-readiness.mjs && node --check src/identity-provider.mjs && node --check src/labs-store.mjs && node --check src/migration-runner.mjs && node --check src/postgres-read-adapter.mjs && node --check src/postgres-workflow-adapter.mjs && node --check src/request-security.mjs && node --check src/role-mapping.mjs && node --check src/runtime-config.mjs && node --check src/storage-port.mjs && node --check src/workflow-policy.mjs && node --check src/workflow-service.mjs && node --check app.js"
+    "check": "node --check server.mjs && node --check scripts/migrate.mjs && node --check src/database-readiness.mjs && node --check src/identity-provider.mjs && node --check src/labs-store.mjs && node --check src/migration-runner.mjs && node --check src/postgres-read-adapter.mjs && node --check src/postgres-workflow-adapter.mjs && node --check src/request-security.mjs && node --check src/retention-policy.mjs && node --check src/role-mapping.mjs && node --check src/runtime-config.mjs && node --check src/storage-port.mjs && node --check src/workflow-policy.mjs && node --check src/workflow-service.mjs && node --check app.js"
   },
   "dependencies": {
     "pg": "^8.18.0"

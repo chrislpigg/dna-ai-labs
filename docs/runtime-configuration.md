@@ -78,3 +78,7 @@ This command creates the schema; it does not make the production HTTP runtime re
 ## Diagnostics
 
 `GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_oidc_jwks_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, `database_unavailable`, `migrations_unavailable`, or `pending_migrations`. In a configured production runtime it also reports the non-secret database connectivity state, migration state, and any repository migration versions that are pending. It never echoes environment values, connection strings, or database errors. Treat a `503` response as a deployment blocker; production API requests also fail closed until this probe reports a current schema.
+
+## Retention policy
+
+Final decisions and audit events receive the server-owned `program_record` classification and a retention-until timestamp at least seven years after creation/finalization. This is a minimum default; corporate policy may require a longer hold. Ordinary project deletion is blocked while a linked final decision remains retained. Do not remove retained records through application SQL or migration shortcuts; obtain the approved compliance disposition process first.

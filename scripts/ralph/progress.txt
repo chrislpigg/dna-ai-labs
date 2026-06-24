@@ -103,4 +103,12 @@ Started: 2026-06-20
 - Files changed: `migrations/004_soft_delete_lifecycle.sql`, `src/labs-store.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `server.mjs`, `test/migration-runner.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: represent deletion reasons as controlled metadata; it preserves an audit explanation without creating another free-text path for sensitive content.
 
+## 2026-06-23 — US-013 Add retention-policy enforcement metadata
+
+- Added server-owned `program_record` retention metadata and a seven-year minimum timestamp to final decisions and every audit event, with production migration indexes and demo-adapter parity.
+- Documented the retention floor and guarded ordinary project soft deletion whenever a linked finalized decision has not reached its retention date.
+- Verification: `npm test` (48 passing) and `npm run check` passed. Vercel preview remains blocked by missing required preview-environment configuration.
+- Files changed: `migrations/005_retention_policy_metadata.sql`, `src/retention-policy.mjs`, `src/labs-store.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `test/migration-runner.test.mjs`, `test/workflow.test.mjs`, `docs/runtime-configuration.md`, `package.json`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: retention must be applied by the server at the moment authoritative records are created or finalized; client-provided expiry values are not a trustworthy compliance control.
+
 ---

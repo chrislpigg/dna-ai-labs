@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { assertStoragePort } from "./storage-port.mjs";
+import { retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -32,6 +33,7 @@ export class WorkflowService {
     requireRole(actor, [roles.ADMIN]);
     const project = this.storage.getProjectIncludingDeleted(id);
     if (project.deletedAt) throw new WorkflowError("ALREADY_DELETED", "Project is already deleted.", 409);
+    if (!retentionExpired(this.storage.projectRetentionUntil(id))) throw new WorkflowError("RETENTION_ACTIVE", "A retained final decision prevents ordinary deletion.", 409);
     if (!deletionReasons.includes(deletionReason)) throw new WorkflowError("INVALID_DELETION_REASON", "Deletion reason is invalid.", 422);
     const timestamp = now();
     this.storage.transaction(() => {
@@ -260,7 +262,7 @@ export class WorkflowService {
     if (decision.missingGates.length) throw new WorkflowError("MISSING_GATES", "Decision gates are incomplete.", 409, { missingGates: decision.missingGates });
     const project = this.project(decision.projectId); const stage = finalStage(decision.outcome); const timestamp = now();
     this.storage.transaction(() => {
-      this.storage.finalizeDecision(id, actor.id, timestamp, project.id, stage, decision.outcome === outcomes.EXTEND ? 1 : 0);
+      this.storage.finalizeDecision(id, actor.id, timestamp, project.id, stage, decision.outcome === outcomes.EXTEND ? 1 : 0, retentionUntil(timestamp));
       this.storage.appendAudit(actor.id, "decision_finalized", "decision", id, { stage: project.stage }, { stage, outcome: decision.outcome });
     });
     return { decision: this.decision(id), project: this.project(project.id) };

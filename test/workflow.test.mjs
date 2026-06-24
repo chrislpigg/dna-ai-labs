@@ -168,3 +168,15 @@ test("only administrators can soft-delete and restore a project, with durable au
     assert.equal(store.auditEvents(admin).some(event => event.action === "project_restored"), true);
   } finally { dispose(); }
 });
+
+test("an unexpired retained final decision blocks ordinary project deletion", () => {
+  const { store, dispose } = createStore();
+  try {
+    store.storage.db.prepare("INSERT INTO decisions (id, project_id, outcome, rationale, status, requested_by, requested_at, finalized_by, finalized_at, retention_classification, retention_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("retained-decision", "accessibility-agent", "Sunset", "Decision metadata", "finalized", "admin", "2026-01-01T00:00:00.000Z", "admin", "2026-01-01T00:00:00.000Z", "program_record", "2033-01-01T00:00:00.000Z");
+    expectWorkflowError(() => store.deleteProject(store.actor("admin"), "accessibility-agent", "duplicate"), "RETENTION_ACTIVE");
+    const audit = store.storage.db.prepare("SELECT retention_classification, retention_until FROM audit_events LIMIT 1").get();
+    assert.equal(audit.retention_classification, "program_record");
+    assert.match(audit.retention_until, /^20\d\d-/);
+  } finally { dispose(); }
+});

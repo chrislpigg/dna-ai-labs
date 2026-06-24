@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { PostgresReadAdapter } from "./postgres-read-adapter.mjs";
 import { deletionReasons } from "./workflow-service.mjs";
+import { retentionClassification, retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -132,9 +133,9 @@ class PostgresTransaction {
     await this.updateProjectStage(projectId, stages.INCUBATING, actorId, timestamp);
   }
 
-  async finalizeDecision(id, actorId, timestamp, projectId, stage, extensionIncrement) {
+  async finalizeDecision(id, actorId, timestamp, projectId, stage, extensionIncrement, retentionUntilValue) {
     await this.query("UPDATE projects SET stage = $3, extension_count = extension_count + $4, updated_at = $5, updated_by = $6 WHERE organization_id = $1 AND id = $2", [this.organizationId, projectId, stage, extensionIncrement, timestamp, actorId]);
-    await this.query("UPDATE decisions SET status = 'finalized', finalized_by = $3, finalized_at = $4 WHERE organization_id = $1 AND id = $2", [this.organizationId, id, actorId, timestamp]);
+    await this.query("UPDATE decisions SET status = 'finalized', finalized_by = $3, finalized_at = $4, retention_classification = $5, retention_until = $6 WHERE organization_id = $1 AND id = $2", [this.organizationId, id, actorId, timestamp, retentionClassification, retentionUntilValue]);
   }
 
   async softDeleteProject(id, actorId, deletionReason, timestamp) {
@@ -146,10 +147,11 @@ class PostgresTransaction {
   }
 
   async appendAudit(actorId, action, entityType, entityId, before, after) {
-    await this.query(`INSERT INTO audit_events (id, organization_id, actor_id, action, entity_type, entity_id, before_summary, after_summary, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)`, [
+    const timestamp = now();
+    await this.query(`INSERT INTO audit_events (id, organization_id, actor_id, action, entity_type, entity_id, before_summary, after_summary, created_at, retention_classification, retention_until)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)`, [
       randomUUID(), this.organizationId, actorId, action, entityType, entityId,
-      before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after), now()
+      before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after), timestamp, retentionClassification, retentionUntil(timestamp)
     ]);
   }
 }
@@ -182,6 +184,10 @@ export class PostgresWorkflowAdapter {
   listProjects() { return this.reads.listProjects(); }
   project(id) { return this.reads.getProject(id); }
   getProjectIncludingDeleted(id) { return this.reads.getProjectIncludingDeleted(id); }
+  async projectRetentionUntil(id) {
+    const result = await this.reads.query("SELECT retention_until FROM decisions WHERE organization_id = $1 AND project_id = $2 AND status = 'finalized' AND retention_until IS NOT NULL ORDER BY retention_until DESC LIMIT 1", [this.organizationId, id]);
+    return result.rows?.[0]?.retention_until || null;
+  }
   listAuditEvents(limit) { return this.reads.listAuditEvents(limit); }
   health() { return this.reads.health(); }
   close() { return this.reads.close(); }
@@ -389,7 +395,7 @@ export class PostgresWorkflowAdapter {
     if (missingApprovals.length) throw new WorkflowError("MISSING_APPROVALS", "Required approvals are incomplete.", 409, { missingApprovals });
     if (decision.missingGates.length) throw new WorkflowError("MISSING_GATES", "Decision gates are incomplete.", 409, { missingGates: decision.missingGates });
     const project = await this.project(decision.projectId); const stage = finalStage(decision.outcome); const timestamp = now();
-    await this.transaction(async tx => { await tx.finalizeDecision(id, actor.id, timestamp, project.id, stage, decision.outcome === outcomes.EXTEND ? 1 : 0); await tx.appendAudit(actor.id, "decision_finalized", "decision", id, { stage: project.stage }, { stage, outcome: decision.outcome }); });
+    await this.transaction(async tx => { await tx.finalizeDecision(id, actor.id, timestamp, project.id, stage, decision.outcome === outcomes.EXTEND ? 1 : 0, retentionUntil(timestamp)); await tx.appendAudit(actor.id, "decision_finalized", "decision", id, { stage: project.stage }, { stage, outcome: decision.outcome }); });
     return { decision: await this.decision(id), project: await this.project(project.id) };
   }
 
@@ -397,6 +403,7 @@ export class PostgresWorkflowAdapter {
     requireRole(actor, [roles.ADMIN]);
     const project = await this.getProjectIncludingDeleted(id);
     if (project.deletedAt) throw new WorkflowError("ALREADY_DELETED", "Project is already deleted.", 409);
+    if (!retentionExpired(await this.projectRetentionUntil(id))) throw new WorkflowError("RETENTION_ACTIVE", "A retained final decision prevents ordinary deletion.", 409);
     if (!deletionReasons.includes(deletionReason)) throw new WorkflowError("INVALID_DELETION_REASON", "Deletion reason is invalid.", 422);
     const timestamp = now();
     await this.transaction(async tx => {

@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -35,6 +35,15 @@ test("soft-delete migration retains governed records and never soft-deletes audi
     assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN deletion_reason TEXT;`));
   }
   assert.doesNotMatch(migration.sql, /ALTER TABLE audit_events ADD COLUMN deleted_at/i);
+});
+
+test("retention migration records seven-year policy metadata for final decisions and audit events", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "005_retention_policy_metadata");
+  assert.ok(migration);
+  assert.match(migration.sql, /ALTER TABLE decisions ADD COLUMN retention_classification TEXT/);
+  assert.match(migration.sql, /ALTER TABLE decisions ADD COLUMN retention_until TIMESTAMPTZ/);
+  assert.match(migration.sql, /ALTER TABLE audit_events ADD COLUMN retention_classification TEXT NOT NULL DEFAULT 'program_record'/);
+  assert.match(migration.sql, /INTERVAL '7 years'/);
 });
 
 test("tenant-scope migration makes each core record organization-bound", () => {
