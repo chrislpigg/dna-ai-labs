@@ -28,6 +28,7 @@ export class WorkflowService {
   users() { return this.storage.listUsers(); }
   project(id) { return this.storage.getProject(id); }
   listProjects() { return this.storage.listProjects(); }
+  verifyAuditIntegrity() { return this.storage.verifyAuditIntegrity(); }
 
   deleteProject(actor, id, deletionReason) {
     requireRole(actor, [roles.ADMIN]);

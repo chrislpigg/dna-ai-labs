@@ -12,7 +12,7 @@ export const storagePortMethods = Object.freeze([
   "getHandoff", "upsertHandoff",
   "findOpenDecision", "insertDecision", "getDecision", "listApprovals",
   "insertApproval", "rejectDecision", "finalizeDecision", "projectRetentionUntil", "softDeleteProject", "restoreProject",
-  "appendAudit", "listAuditEvents", "transaction", "health", "close"
+  "appendAudit", "listAuditEvents", "verifyAuditIntegrity", "transaction", "health", "close"
 ]);
 
 export function assertStoragePort(storage) {

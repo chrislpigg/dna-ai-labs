@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -44,6 +44,15 @@ test("retention migration records seven-year policy metadata for final decisions
   assert.match(migration.sql, /ALTER TABLE decisions ADD COLUMN retention_until TIMESTAMPTZ/);
   assert.match(migration.sql, /ALTER TABLE audit_events ADD COLUMN retention_classification TEXT NOT NULL DEFAULT 'program_record'/);
   assert.match(migration.sql, /INTERVAL '7 years'/);
+});
+
+test("audit integrity migration adds a tenant-scoped hash chain", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "006_audit_integrity_chain");
+  assert.ok(migration);
+  assert.match(migration.sql, /audit_sequence BIGINT NOT NULL/);
+  assert.match(migration.sql, /previous_hash TEXT NOT NULL/);
+  assert.match(migration.sql, /event_hash TEXT NOT NULL/);
+  assert.match(migration.sql, /audit_events_sequence_unique UNIQUE \(organization_id, audit_sequence\)/);
 });
 
 test("tenant-scope migration makes each core record organization-bound", () => {

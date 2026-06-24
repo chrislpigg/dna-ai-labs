@@ -17,6 +17,7 @@ import {
 } from "./workflow-policy.mjs";
 import { WorkflowService } from "./workflow-service.mjs";
 import { retentionClassification, retentionUntil } from "./retention-policy.mjs";
+import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
 
 const now = () => new Date().toISOString();
 const json = value => JSON.stringify(value ?? {});
@@ -106,7 +107,8 @@ export class SqliteLabsStorage {
       );
       CREATE TABLE IF NOT EXISTS audit_events (
         id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
-        before_json TEXT, after_json TEXT, created_at TEXT NOT NULL, retention_classification TEXT NOT NULL DEFAULT 'program_record', retention_until TEXT NOT NULL
+        before_json TEXT, after_json TEXT, created_at TEXT NOT NULL, retention_classification TEXT NOT NULL DEFAULT 'program_record', retention_until TEXT NOT NULL,
+        audit_sequence INTEGER, previous_hash TEXT, event_hash TEXT
       );
     `);
     this.ensureColumn("projects", "adoption_acknowledged_by", "TEXT");
@@ -118,6 +120,9 @@ export class SqliteLabsStorage {
     this.ensureColumn("decisions", "retention_until", "TEXT");
     this.ensureColumn("audit_events", "retention_classification", "TEXT");
     this.ensureColumn("audit_events", "retention_until", "TEXT");
+    this.ensureColumn("audit_events", "audit_sequence", "INTEGER");
+    this.ensureColumn("audit_events", "previous_hash", "TEXT");
+    this.ensureColumn("audit_events", "event_hash", "TEXT");
   }
 
   ensureColumn(table, column, definition) {
@@ -155,8 +160,12 @@ export class SqliteLabsStorage {
 
   audit(actorId, action, entityType, entityId, before, after) {
     const timestamp = now();
-    this.db.prepare("INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, before_json, after_json, created_at, retention_classification, retention_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), actorId, action, entityType, entityId, before ? json(before) : null, after ? json(after) : null, timestamp, retentionClassification, retentionUntil(timestamp));
+    const last = this.db.prepare("SELECT audit_sequence, event_hash FROM audit_events ORDER BY audit_sequence DESC LIMIT 1").get();
+    const auditSequence = Number(last?.audit_sequence || 0) + 1;
+    const previousHash = last?.event_hash || auditGenesisHash;
+    const eventHash = auditEventHash({ auditSequence, previousHash, actorId, action, entityType, entityId, before: before || null, after: after || null, createdAt: timestamp });
+    this.db.prepare("INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, before_json, after_json, created_at, retention_classification, retention_until, audit_sequence, previous_hash, event_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), actorId, action, entityType, entityId, before ? json(before) : null, after ? json(after) : null, timestamp, retentionClassification, retentionUntil(timestamp), auditSequence, previousHash, eventHash);
   }
 
   project(id) {
@@ -578,9 +587,11 @@ export class SqliteLabsStorage {
   }
 
   listAuditEvents(limit) {
-    return this.db.prepare("SELECT id, actor_id AS actorId, action, entity_type AS entityType, entity_id AS entityId, before_json AS beforeJson, after_json AS afterJson, created_at AS createdAt FROM audit_events ORDER BY created_at DESC LIMIT ?").all(limit)
+    return this.db.prepare("SELECT id, actor_id AS actorId, action, entity_type AS entityType, entity_id AS entityId, before_json AS beforeJson, after_json AS afterJson, created_at AS createdAt, audit_sequence AS auditSequence, previous_hash AS previousHash, event_hash AS eventHash FROM audit_events ORDER BY audit_sequence DESC LIMIT ?").all(limit)
       .map(event => ({ ...event, before: event.beforeJson ? parse(event.beforeJson) : null, after: event.afterJson ? parse(event.afterJson) : null, beforeJson: undefined, afterJson: undefined }));
   }
+
+  verifyAuditIntegrity() { return verifyAuditChain(this.listAuditEvents(Number.MAX_SAFE_INTEGER).reverse()); }
 
   health() {
     return this.db.prepare("SELECT 1 AS ok").get().ok === 1;

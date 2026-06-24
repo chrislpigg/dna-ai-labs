@@ -180,3 +180,12 @@ test("an unexpired retained final decision blocks ordinary project deletion", ()
     assert.match(audit.retention_until, /^20\d\d-/);
   } finally { dispose(); }
 });
+
+test("audit integrity verification detects an altered durable audit record", () => {
+  const { store, dispose } = createStore();
+  try {
+    assert.equal(store.verifyAuditIntegrity().valid, true);
+    store.storage.db.prepare("UPDATE audit_events SET action = ? WHERE audit_sequence = 1").run("altered_after_write");
+    assert.deepEqual(store.verifyAuditIntegrity(), { valid: false, checked: 0, issue: "audit_hash_mismatch" });
+  } finally { dispose(); }
+});

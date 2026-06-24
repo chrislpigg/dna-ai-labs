@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { PostgresReadAdapter } from "./postgres-read-adapter.mjs";
 import { deletionReasons } from "./workflow-service.mjs";
 import { retentionClassification, retentionExpired, retentionUntil } from "./retention-policy.mjs";
+import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -148,10 +149,15 @@ class PostgresTransaction {
 
   async appendAudit(actorId, action, entityType, entityId, before, after) {
     const timestamp = now();
-    await this.query(`INSERT INTO audit_events (id, organization_id, actor_id, action, entity_type, entity_id, before_summary, after_summary, created_at, retention_classification, retention_until)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)`, [
+    await this.query("SELECT pg_advisory_xact_lock(hashtext($1))", [this.organizationId]);
+    const prior = await this.query("SELECT audit_sequence, event_hash FROM audit_events WHERE organization_id = $1 ORDER BY audit_sequence DESC LIMIT 1", [this.organizationId]);
+    const auditSequence = Number(prior.rows?.[0]?.audit_sequence || 0) + 1;
+    const previousHash = prior.rows?.[0]?.event_hash || auditGenesisHash;
+    const eventHash = auditEventHash({ auditSequence, previousHash, actorId, action, entityType, entityId, before, after, createdAt: timestamp });
+    await this.query(`INSERT INTO audit_events (id, organization_id, actor_id, action, entity_type, entity_id, before_summary, after_summary, created_at, retention_classification, retention_until, audit_sequence, previous_hash, event_hash)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14)`, [
       randomUUID(), this.organizationId, actorId, action, entityType, entityId,
-      before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after), timestamp, retentionClassification, retentionUntil(timestamp)
+      before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after), timestamp, retentionClassification, retentionUntil(timestamp), auditSequence, previousHash, eventHash
     ]);
   }
 }
@@ -187,6 +193,10 @@ export class PostgresWorkflowAdapter {
   async projectRetentionUntil(id) {
     const result = await this.reads.query("SELECT retention_until FROM decisions WHERE organization_id = $1 AND project_id = $2 AND status = 'finalized' AND retention_until IS NOT NULL ORDER BY retention_until DESC LIMIT 1", [this.organizationId, id]);
     return result.rows?.[0]?.retention_until || null;
+  }
+  async verifyAuditIntegrity() {
+    const result = await this.reads.query("SELECT audit_sequence AS \"auditSequence\", previous_hash AS \"previousHash\", event_hash AS \"eventHash\", actor_id AS \"actorId\", action, entity_type AS \"entityType\", entity_id AS \"entityId\", before_summary AS before, after_summary AS after, created_at AS \"createdAt\" FROM audit_events WHERE organization_id = $1 ORDER BY audit_sequence", [this.organizationId]);
+    return verifyAuditChain(result.rows || []);
   }
   listAuditEvents(limit) { return this.reads.listAuditEvents(limit); }
   health() { return this.reads.health(); }

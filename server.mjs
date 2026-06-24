@@ -100,6 +100,10 @@ async function api(req, res, url) {
     const limit = Number(url.searchParams.get("limit")) || 100;
     return respond(res, 200, { events: store ? store.auditEvents(requestActor, limit) : await workflow.listAuditEvents(limit) });
   }
+  if (req.method === "GET" && path === "/api/v1/audit-events/verify") {
+    requireRole(requestActor, [roles.ADMIN]);
+    return respond(res, 200, { integrity: await workflow.verifyAuditIntegrity() });
+  }
   if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: await workflow.createIntake(requestActor, await body(req)) });
 
   let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);

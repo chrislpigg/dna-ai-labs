@@ -82,3 +82,7 @@ This command creates the schema; it does not make the production HTTP runtime re
 ## Retention policy
 
 Final decisions and audit events receive the server-owned `program_record` classification and a retention-until timestamp at least seven years after creation/finalization. This is a minimum default; corporate policy may require a longer hold. Ordinary project deletion is blocked while a linked final decision remains retained. Do not remove retained records through application SQL or migration shortcuts; obtain the approved compliance disposition process first.
+
+## Audit integrity verification
+
+Each new audit event carries a tenant-scoped sequence, prior hash, and SHA-256 event hash. An authorized administrator can run `GET /api/v1/audit-events/verify`; it returns only `valid`, checked-count, and a stable mismatch code. Run this after restoration and during scheduled audit review. The integrity-chain migration intentionally refuses populated historical audit data until an approved baseline procedure is available, rather than pretending unchained history has been verified.
