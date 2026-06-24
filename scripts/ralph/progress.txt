@@ -119,4 +119,11 @@ Started: 2026-06-20
 - Files changed: `migrations/006_audit_integrity_chain.sql`, `src/audit-integrity.mjs`, `src/labs-store.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `server.mjs`, `test/migration-runner.test.mjs`, `test/workflow.test.mjs`, `docs/runtime-configuration.md`, `package.json`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: audit immutability needs independent integrity verification; append-only database permissions alone cannot prove that historical rows have not been altered out of band.
 
+## 2026-06-23 — US-015 Document backup and restore operations
+
+- Added a managed-PostgreSQL backup and restore runbook with RPO/RTO targets, quarterly restore-test evidence, ownership/escalation boundaries, readiness checks, and mandatory audit-chain verification after restoration.
+- Verification: `npm test` (50 passing) and `npm run check` passed. Vercel preview remains blocked by missing required preview-environment configuration.
+- Files changed: `docs/backup-and-restore-runbook.md`, `README.md`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: a restore runbook must separate the provider-owned recovery mechanics from the application-owned integrity and authorization checks, so neither team assumes the other verified end-to-end recoverability.
+
 ---
