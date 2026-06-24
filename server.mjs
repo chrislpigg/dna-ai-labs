@@ -103,6 +103,11 @@ async function api(req, res, url) {
   if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: await workflow.createIntake(requestActor, await body(req)) });
 
   let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
+  match = path.match(/^\/api\/v1\/projects\/([^/]+)$/);
+  if (req.method === "DELETE" && match) return respond(res, 204, await workflow.deleteProject(requestActor, match[1], (await body(req)).deletionReason));
+  match = path.match(/^\/api\/v1\/projects\/([^/]+)\/restore$/);
+  if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.restoreProject(requestActor, match[1]) });
+  match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
   if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.selectProject(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/start-incubation$/);
   if (req.method === "POST" && match) return respond(res, 200, { project: await workflow.startIncubation(requestActor, match[1]) });

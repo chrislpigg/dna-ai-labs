@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { PostgresReadAdapter } from "./postgres-read-adapter.mjs";
+import { deletionReasons } from "./workflow-service.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -136,6 +137,14 @@ class PostgresTransaction {
     await this.query("UPDATE decisions SET status = 'finalized', finalized_by = $3, finalized_at = $4 WHERE organization_id = $1 AND id = $2", [this.organizationId, id, actorId, timestamp]);
   }
 
+  async softDeleteProject(id, actorId, deletionReason, timestamp) {
+    await this.query("UPDATE projects SET deleted_at = $3, deleted_by = $4, deletion_reason = $5, updated_at = $3, updated_by = $4 WHERE organization_id = $1 AND id = $2 AND deleted_at IS NULL", [this.organizationId, id, timestamp, actorId, deletionReason]);
+  }
+
+  async restoreProject(id, actorId, timestamp) {
+    await this.query("UPDATE projects SET deleted_at = NULL, deleted_by = NULL, deletion_reason = NULL, updated_at = $3, updated_by = $4 WHERE organization_id = $1 AND id = $2 AND deleted_at IS NOT NULL", [this.organizationId, id, timestamp, actorId]);
+  }
+
   async appendAudit(actorId, action, entityType, entityId, before, after) {
     await this.query(`INSERT INTO audit_events (id, organization_id, actor_id, action, entity_type, entity_id, before_summary, after_summary, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)`, [
@@ -172,6 +181,7 @@ export class PostgresWorkflowAdapter {
   getActorBySubject(subject, role) { return this.reads.getActorBySubject(subject, role); }
   listProjects() { return this.reads.listProjects(); }
   project(id) { return this.reads.getProject(id); }
+  getProjectIncludingDeleted(id) { return this.reads.getProjectIncludingDeleted(id); }
   listAuditEvents(limit) { return this.reads.listAuditEvents(limit); }
   health() { return this.reads.health(); }
   close() { return this.reads.close(); }
@@ -381,6 +391,30 @@ export class PostgresWorkflowAdapter {
     const project = await this.project(decision.projectId); const stage = finalStage(decision.outcome); const timestamp = now();
     await this.transaction(async tx => { await tx.finalizeDecision(id, actor.id, timestamp, project.id, stage, decision.outcome === outcomes.EXTEND ? 1 : 0); await tx.appendAudit(actor.id, "decision_finalized", "decision", id, { stage: project.stage }, { stage, outcome: decision.outcome }); });
     return { decision: await this.decision(id), project: await this.project(project.id) };
+  }
+
+  async deleteProject(actor, id, deletionReason) {
+    requireRole(actor, [roles.ADMIN]);
+    const project = await this.getProjectIncludingDeleted(id);
+    if (project.deletedAt) throw new WorkflowError("ALREADY_DELETED", "Project is already deleted.", 409);
+    if (!deletionReasons.includes(deletionReason)) throw new WorkflowError("INVALID_DELETION_REASON", "Deletion reason is invalid.", 422);
+    const timestamp = now();
+    await this.transaction(async tx => {
+      await tx.softDeleteProject(id, actor.id, deletionReason, timestamp);
+      await tx.appendAudit(actor.id, "project_deleted", "project", id, { deletedAt: null }, { deletionReason, deletedAt: timestamp });
+    });
+  }
+
+  async restoreProject(actor, id) {
+    requireRole(actor, [roles.ADMIN]);
+    const project = await this.getProjectIncludingDeleted(id);
+    if (!project.deletedAt) throw new WorkflowError("NOT_DELETED", "Project is not deleted.", 409);
+    const timestamp = now();
+    await this.transaction(async tx => {
+      await tx.restoreProject(id, actor.id, timestamp);
+      await tx.appendAudit(actor.id, "project_restored", "project", id, { deletedAt: project.deletedAt, deletionReason: project.deletionReason }, { deletedAt: null });
+    });
+    return this.project(id);
   }
 }
 

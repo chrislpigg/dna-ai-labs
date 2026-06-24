@@ -150,3 +150,21 @@ test("a rejected decision returns the project to incubation and permits a revise
     assert.equal(store.auditEvents(labLead).some(event => event.action === "decision_rejected"), true);
   } finally { dispose(); }
 });
+
+test("only administrators can soft-delete and restore a project, with durable audit history", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    expectWorkflowError(() => store.deleteProject(store.actor("lab-lead"), "accessibility-agent", "duplicate"), "FORBIDDEN");
+    expectWorkflowError(() => store.deleteProject(admin, "accessibility-agent", "free-form-sensitive-content"), "INVALID_DELETION_REASON");
+
+    store.deleteProject(admin, "accessibility-agent", "duplicate");
+    assert.equal(store.listProjects().some(project => project.id === "accessibility-agent"), false);
+    expectWorkflowError(() => store.project("accessibility-agent"), "NOT_FOUND");
+    assert.equal(store.auditEvents(admin).some(event => event.action === "project_deleted"), true);
+
+    const restored = store.restoreProject(admin, "accessibility-agent");
+    assert.equal(restored.id, "accessibility-agent");
+    assert.equal(store.auditEvents(admin).some(event => event.action === "project_restored"), true);
+  } finally { dispose(); }
+});

@@ -95,4 +95,12 @@ Started: 2026-06-20
 - Files changed: `src/database-readiness.mjs`, `server.mjs`, `test/database-readiness.test.mjs`, `package.json`, `docs/runtime-configuration.md`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: readiness must validate both reachability and migration provenance; a successful `SELECT 1` cannot prove that the service can safely operate against its authoritative schema.
 
+## 2026-06-23 — US-012 Add soft-delete lifecycle controls
+
+- Added tenant-safe soft-delete metadata and active-record indexes for cycles, projects, evidence entries, decisions, and handoffs; audit events remain append-only and are not deletable. Normal project reads exclude deleted projects.
+- Added administrator-only project delete/restore endpoints and workflow methods. Reasons are a fixed metadata enum rather than free-form content, and every delete/restore shares its transaction with a durable audit event.
+- Verification: `npm test` (46 passing) and `npm run check` passed. Vercel preview remains blocked because the linked preview environment has no required configuration variables.
+- Files changed: `migrations/004_soft_delete_lifecycle.sql`, `src/labs-store.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `server.mjs`, `test/migration-runner.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: represent deletion reasons as controlled metadata; it preserves an audit explanation without creating another free-text path for sensitive content.
+
 ---

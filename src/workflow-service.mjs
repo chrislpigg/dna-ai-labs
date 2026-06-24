@@ -14,6 +14,7 @@ import {
 } from "./workflow-policy.mjs";
 
 const now = () => new Date().toISOString();
+export const deletionReasons = Object.freeze(["duplicate", "withdrawn", "created_in_error", "governance_removal"]);
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
@@ -26,6 +27,30 @@ export class WorkflowService {
   users() { return this.storage.listUsers(); }
   project(id) { return this.storage.getProject(id); }
   listProjects() { return this.storage.listProjects(); }
+
+  deleteProject(actor, id, deletionReason) {
+    requireRole(actor, [roles.ADMIN]);
+    const project = this.storage.getProjectIncludingDeleted(id);
+    if (project.deletedAt) throw new WorkflowError("ALREADY_DELETED", "Project is already deleted.", 409);
+    if (!deletionReasons.includes(deletionReason)) throw new WorkflowError("INVALID_DELETION_REASON", "Deletion reason is invalid.", 422);
+    const timestamp = now();
+    this.storage.transaction(() => {
+      this.storage.softDeleteProject(id, actor.id, deletionReason, timestamp);
+      this.storage.appendAudit(actor.id, "project_deleted", "project", id, { deletedAt: null }, { deletionReason, deletedAt: timestamp });
+    });
+  }
+
+  restoreProject(actor, id) {
+    requireRole(actor, [roles.ADMIN]);
+    const project = this.storage.getProjectIncludingDeleted(id);
+    if (!project.deletedAt) throw new WorkflowError("NOT_DELETED", "Project is not deleted.", 409);
+    const timestamp = now();
+    this.storage.transaction(() => {
+      this.storage.restoreProject(id, actor.id, timestamp);
+      this.storage.appendAudit(actor.id, "project_restored", "project", id, { deletedAt: project.deletedAt, deletionReason: project.deletionReason }, { deletedAt: null });
+    });
+    return this.project(id);
+  }
 
   validateIntake(input) {
     const required = ["title", "originTeam", "users", "problem", "metric", "baseline", "target", "metricSource", "metricOwnerId", "sponsorId", "projectLeadId", "riskClassification"];

@@ -20,10 +20,21 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("soft-delete migration retains governed records and never soft-deletes audit events", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "004_soft_delete_lifecycle");
+  assert.ok(migration);
+  for (const table of ["cycles", "projects", "evidence_entries", "decisions", "handoffs"]) {
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN deleted_at TIMESTAMPTZ;`));
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN deleted_by TEXT;`));
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN deletion_reason TEXT;`));
+  }
+  assert.doesNotMatch(migration.sql, /ALTER TABLE audit_events ADD COLUMN deleted_at/i);
 });
 
 test("tenant-scope migration makes each core record organization-bound", () => {

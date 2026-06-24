@@ -70,6 +70,7 @@ export class SqliteLabsStorage {
         sponsor_id TEXT NOT NULL, receiving_owner_id TEXT, project_lead_id TEXT NOT NULL, risk_classification TEXT NOT NULL,
         transfer_date TEXT, adoption_acknowledged_by TEXT, adoption_acknowledged_at TEXT, shared_platform_impact INTEGER NOT NULL DEFAULT 0, extension_count INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        deleted_at TEXT, deleted_by TEXT, deletion_reason TEXT,
         FOREIGN KEY(sponsor_id) REFERENCES users(id), FOREIGN KEY(receiving_owner_id) REFERENCES users(id), FOREIGN KEY(project_lead_id) REFERENCES users(id)
       );
       CREATE TABLE IF NOT EXISTS project_gates (
@@ -109,6 +110,9 @@ export class SqliteLabsStorage {
     `);
     this.ensureColumn("projects", "adoption_acknowledged_by", "TEXT");
     this.ensureColumn("projects", "adoption_acknowledged_at", "TEXT");
+    this.ensureColumn("projects", "deleted_at", "TEXT");
+    this.ensureColumn("projects", "deleted_by", "TEXT");
+    this.ensureColumn("projects", "deletion_reason", "TEXT");
   }
 
   ensureColumn(table, column, definition) {
@@ -152,7 +156,7 @@ export class SqliteLabsStorage {
   project(id) {
     const row = this.db.prepare(`SELECT p.*, sponsor.name AS sponsor_name, receiver.name AS receiving_owner_name, lead.name AS project_lead_name
       FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
-      JOIN users lead ON lead.id = p.project_lead_id WHERE p.id = ?`).get(id);
+      JOIN users lead ON lead.id = p.project_lead_id WHERE p.id = ? AND p.deleted_at IS NULL`).get(id);
     if (!row) throw new WorkflowError("NOT_FOUND", "Project not found.", 404);
     return this.serializeProject(row);
   }
@@ -160,7 +164,7 @@ export class SqliteLabsStorage {
   listProjects() {
     const rows = this.db.prepare(`SELECT p.*, sponsor.name AS sponsor_name, receiver.name AS receiving_owner_name, lead.name AS project_lead_name
       FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
-      JOIN users lead ON lead.id = p.project_lead_id ORDER BY p.updated_at DESC`).all();
+      JOIN users lead ON lead.id = p.project_lead_id WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC`).all();
     return rows.map(row => this.serializeProject(row));
   }
 
@@ -182,7 +186,7 @@ export class SqliteLabsStorage {
       projectLead: { id: row.project_lead_id, name: row.project_lead_name }, riskClassification: row.risk_classification, transferDate: row.transfer_date,
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
       sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
-      createdAt: row.created_at, updatedAt: row.updated_at
+      createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
     };
   }
 
@@ -457,7 +461,7 @@ export class SqliteLabsStorage {
   listProjects() {
     const rows = this.db.prepare(`SELECT p.*, sponsor.name AS sponsor_name, receiver.name AS receiving_owner_name, lead.name AS project_lead_name
       FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
-      JOIN users lead ON lead.id = p.project_lead_id ORDER BY p.updated_at DESC`).all();
+      JOIN users lead ON lead.id = p.project_lead_id WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC`).all();
     return rows.map(row => this.serializeProject(row));
   }
   appendAudit(actorId, action, entityType, entityId, before, after) { this.audit(actorId, action, entityType, entityId, before, after); }
@@ -478,6 +482,24 @@ export class SqliteLabsStorage {
 
   updateProjectStage(id, stage, actorId, timestamp) {
     this.db.prepare("UPDATE projects SET stage = ?, updated_at = ?, updated_by = ? WHERE id = ?").run(stage, timestamp, actorId, id);
+  }
+
+  getProjectIncludingDeleted(id) {
+    const row = this.db.prepare(`SELECT p.*, sponsor.name AS sponsor_name, receiver.name AS receiving_owner_name, lead.name AS project_lead_name
+      FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
+      JOIN users lead ON lead.id = p.project_lead_id WHERE p.id = ?`).get(id);
+    if (!row) throw new WorkflowError("NOT_FOUND", "Project not found.", 404);
+    return this.serializeProject(row);
+  }
+
+  softDeleteProject(id, actorId, reason, timestamp) {
+    this.db.prepare("UPDATE projects SET deleted_at = ?, deleted_by = ?, deletion_reason = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL")
+      .run(timestamp, actorId, reason, timestamp, actorId, id);
+  }
+
+  restoreProject(id, actorId, timestamp) {
+    this.db.prepare("UPDATE projects SET deleted_at = NULL, deleted_by = NULL, deletion_reason = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NOT NULL")
+      .run(timestamp, actorId, id);
   }
 
   acknowledgeProjectAdoption(projectId, actorId, timestamp) {

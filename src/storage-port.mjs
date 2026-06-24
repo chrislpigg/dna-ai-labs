@@ -6,12 +6,12 @@
  * adapter and leaves production storage replaceable.
  */
 export const storagePortMethods = Object.freeze([
-  "getActor", "listUsers", "getProject", "listProjects",
+  "getActor", "listUsers", "getProject", "getProjectIncludingDeleted", "listProjects",
   "insertProject", "updateProjectStage", "acknowledgeProjectAdoption",
   "upsertGate", "insertEvidence", "upsertReview", "listReviews",
   "getHandoff", "upsertHandoff",
   "findOpenDecision", "insertDecision", "getDecision", "listApprovals",
-  "insertApproval", "rejectDecision", "finalizeDecision",
+  "insertApproval", "rejectDecision", "finalizeDecision", "softDeleteProject", "restoreProject",
   "appendAudit", "listAuditEvents", "transaction", "health", "close"
 ]);
 
