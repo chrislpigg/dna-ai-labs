@@ -77,4 +77,4 @@ This command creates the schema; it does not make the production HTTP runtime re
 
 ## Diagnostics
 
-`GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_oidc_jwks_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, or `database_unavailable`. It never echoes environment values or secrets. Treat a `503` response as a deployment blocker.
+`GET /readyz` returns only stable issue codes such as `missing_database_url`, `invalid_oidc_jwks_url`, `invalid_approved_artifact_origins`, `demo_mode_enabled`, `database_unavailable`, `migrations_unavailable`, or `pending_migrations`. In a configured production runtime it also reports the non-secret database connectivity state, migration state, and any repository migration versions that are pending. It never echoes environment values, connection strings, or database errors. Treat a `503` response as a deployment blocker; production API requests also fail closed until this probe reports a current schema.

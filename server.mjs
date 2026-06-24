@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { LabsStore } from "./src/labs-store.mjs";
 import { createIdentityProvider } from "./src/identity-provider.mjs";
 import { createPostgresWorkflowAdapter } from "./src/postgres-workflow-adapter.mjs";
+import { createDatabaseReadinessProbe } from "./src/database-readiness.mjs";
 import { demoGroupRoleMapping, parseGroupRoleMapping, resolveApplicationRole } from "./src/role-mapping.mjs";
 import { requireRole, roles, WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
@@ -21,6 +22,9 @@ const postgresWorkflow = !demoMode && runtimeConfiguration.valid
   ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins })
   : null;
 const workflow = store || postgresWorkflow;
+const databaseReadiness = !demoMode && runtimeConfiguration.valid
+  ? createDatabaseReadinessProbe({ databaseUrl: process.env.LABS_DATABASE_URL })
+  : null;
 const demoIdentities = demoMode ? Object.fromEntries(store.users().map(user => [user.id, {
   groups: [user.role], organization: "demo-tenant", sessionExpiresAt: "2099-01-01T00:00:00.000Z"
 }])) : undefined;
@@ -40,16 +44,24 @@ function respond(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
-function readiness() {
+async function readiness() {
   const status = runtimeReadiness(process.env);
   const issues = [...status.issues];
   if (store && !store.health()) issues.push("database_unavailable");
-  return { ready: issues.length === 0, mode: status.mode, issues };
+  const database = databaseReadiness
+    ? await databaseReadiness.check()
+    : { connectivity: demoMode ? "demo" : "unconfigured", migrationState: demoMode ? "not_applicable" : "unknown", pendingMigrations: [], issues: [] };
+  issues.push(...database.issues);
+  return { ready: issues.length === 0, mode: status.mode, issues: [...new Set(issues)], database };
 }
 
-function requireOperationalRuntime() {
+async function requireOperationalRuntime() {
   if (!workflow) {
     throw new WorkflowError("RUNTIME_NOT_CONFIGURED", "The production runtime is not yet configured for operation.", 503);
+  }
+  if (databaseReadiness) {
+    const database = await databaseReadiness.check();
+    if (!database.ready) throw new WorkflowError("DATABASE_NOT_READY", "The authoritative database is not ready for operation.", 503, { issues: database.issues });
   }
 }
 
@@ -67,7 +79,7 @@ async function body(req) {
 
 async function actor(req) {
   const identity = await identityProvider.authenticate(req);
-  requireOperationalRuntime();
+  await requireOperationalRuntime();
   requireProductionTenant(identity);
   const role = resolveApplicationRole(identity.groups, groupRoleMapping);
   const user = store ? store.actor(identity.subject) : await postgresWorkflow.getActorBySubject(identity.subject, role);
@@ -129,11 +141,12 @@ export async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     if (req.method === "GET" && url.pathname === "/healthz") {
-      const healthy = workflow ? await workflow.health() : false;
+      const database = databaseReadiness ? await databaseReadiness.check() : null;
+      const healthy = workflow ? await workflow.health() && (!database || database.ready) : false;
       return respond(res, healthy ? 200 : 503, { status: healthy ? "ok" : "error" });
     }
     if (req.method === "GET" && url.pathname === "/readyz") {
-      const status = readiness();
+      const status = await readiness();
       return respond(res, status.ready ? 200 : 503, status);
     }
     if (url.pathname.startsWith("/api/")) await api(req, res, url); else await staticFile(req, res, url);

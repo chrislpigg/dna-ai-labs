@@ -87,4 +87,12 @@ Started: 2026-06-20
 - Verification: `npm test` (41 passing) and `npm run check` passed. Vercel CLI authentication and project linkage are available, but `npx vercel env ls preview` returned `No Environment Variables found`; no preview was created because required OIDC, database, tenant, approved-artifact, notification, and integration configuration is absent.
 - Reusable learning: use a checked-out PostgreSQL client—not a pool-level query helper—for transaction scope, so the workflow state change and append-only audit insert can be committed or rolled back as one unit.
 
+## 2026-06-23 — US-011 Require production database readiness
+
+- Added a production-only PostgreSQL readiness probe that checks connectivity and compares the full tracked migration checksum set to `schema_migrations`. Production health, readiness, and API operations fail closed when the database is unavailable, the schema migration table is absent, history is altered, or migrations are pending; demo mode remains explicitly non-ready.
+- `/readyz` exposes only non-secret connectivity, migration-state, pending-version, and stable issue-code metadata. Added focused readiness coverage for current, pending, missing, altered, unavailable, and client-cleanup paths.
+- Verification: `npm test` (44 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for the linked project, so no preview was created: the production OIDC, PostgreSQL, tenant, approved-artifact, and integration configuration contracts are absent.
+- Files changed: `src/database-readiness.mjs`, `server.mjs`, `test/database-readiness.test.mjs`, `package.json`, `docs/runtime-configuration.md`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: readiness must validate both reachability and migration provenance; a successful `SELECT 1` cannot prove that the service can safely operate against its authoritative schema.
+
 ---
