@@ -41,7 +41,7 @@
           </div>
           <div class="topbar-actions">
             <span class="data-note" id="identity-note">Loading secure session…</span>
-            <label class="demo-actor" id="demo-actor-wrap" hidden>Demo role<select id="demo-actor"><option value="lab-lead">Lab lead</option><option value="executive-sponsor">Executive sponsor</option><option value="platform-reviewer">Platform reviewer</option><option value="receiving-owner">Receiving owner</option><option value="accessibility-lead">Project lead</option></select></label>
+            <label class="demo-actor" id="demo-actor-wrap" hidden>Demo role<select id="demo-actor"><option value="lab-lead">Lab lead</option><option value="submitter-1">Submitter</option><option value="executive-sponsor">Executive sponsor</option><option value="platform-reviewer">Platform reviewer</option><option value="receiving-owner">Receiving owner</option><option value="accessibility-lead">Project lead</option></select></label>
             <button class="button button-primary" data-open-intake>+ Submit a problem</button>
           </div>
         </header>
@@ -82,6 +82,14 @@
 
         <section id="intake" class="view" aria-label="New project intake">
           <div class="content-intro"><p class="eyebrow">Lab intake</p><h2>Bring a company problem, not an AI idea.</h2><p>The Lab will help refine promising submissions. Selection requires an adoption path and an outcome we can measure during a 6–8 week pilot.</p></div>
+          <section id="draft-panel" class="draft-panel" aria-labelledby="draft-panel-title" hidden>
+            <div>
+              <p class="eyebrow">Saved drafts</p>
+              <h3 id="draft-panel-title">Resume an intake</h3>
+            </div>
+            <div id="draft-list" class="draft-list" aria-live="polite"></div>
+          </section>
+          <p id="draft-status" class="form-status" role="status" aria-live="polite"></p>
           <form id="intake-form" class="intake-form">
             <div class="form-section"><p class="form-number">01</p><div><h3>The problem</h3><p>Describe the recurring work or friction in plain language.</p></div></div>
             <div class="form-grid">
@@ -108,7 +116,7 @@
               <label>Transfer target<input required name="transfer" type="date" /></label>
             </div>
             <div class="selection-gates"><label><input required type="checkbox" name="adoption" /> <span><b>Adoption gate</b>I have discussed a plausible receiving owner and external users.</span></label><label><input required type="checkbox" name="evidence" /> <span><b>Evidence gate</b>We can measure a user or business outcome during the pilot.</span></label></div>
-            <div class="form-actions"><p>Submissions are stored on the Lab service and create an auditable intake record. Do not include sensitive source data.</p><button class="button button-primary" type="submit">Submit for triage <span>→</span></button></div>
+            <div class="form-actions"><p>Submissions are stored on the Lab service and create an auditable intake record. Do not include sensitive source data.</p><div class="form-action-buttons"><button class="button button-ghost" type="button" data-save-draft>Save draft</button><button class="button button-primary" type="submit">Submit for triage <span>→</span></button></div></div>
           </form>
         </section>
 

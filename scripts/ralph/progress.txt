@@ -134,4 +134,14 @@ Started: 2026-06-20
 - Files changed: `migrations/007_intake_draft_persistence.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: keep incomplete intake content in an access-scoped draft table until submission; overloading the authoritative project table would either require placeholder governance data or risk exposing drafts through portfolio queries.
 
+## 2026-07-02 — US-017 Build intake draft UI
+
+- Added intake save-draft and resume-draft controls backed by the server draft endpoints. The draft save path bypasses required submit validation so incomplete intakes can be saved, while final submission still uses the governed intake submit endpoint.
+- Added an accessible draft status region for save/load/resume failures and hid draft lists, save controls, and previously loaded draft content when the active role is not authorized for draft access.
+- Added static frontend regression coverage for the no-build UI contract and included the test in `npm run check` syntax coverage.
+- Verification: `npm test` (56 passing) and `npm run check` passed. A local demo-mode HTTP verification confirmed the static controls were served, `submitter-1` could create/list/resume a draft, and `receiving-owner` received `403 FORBIDDEN` for the same draft. In-app browser verification was blocked because the Browser plugin reported no available browser backends (`agent.browsers.list()` returned `[]`).
+- Vercel preview: `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `app.js`, `index.html`, `styles.css`, `package.json`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: in the static prototype, keep draft visibility decisions aligned with the server role contract and clear loaded draft state when the verified role changes to one that cannot access draft endpoints.
+
 ---

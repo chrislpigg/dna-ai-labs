@@ -5,9 +5,12 @@ let currentUser = null;
 let demoMode = false;
 let demoActorId = "lab-lead";
 let auditLoaded = false;
+let intakeDrafts = [];
+let activeDraftId = null;
 
 const activeStages = new Set(["Selected", "Incubating", "Decision pending"]);
 const candidateStages = new Set(["Draft", "Submitted", "Triage"]);
+const draftRoles = new Set(["employee", "submitter", "project-lead", "lab-lead", "admin"]);
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" }[char]));
@@ -25,6 +28,143 @@ async function api(path, options = {}) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error?.message || "The request could not be completed.");
   return payload;
+}
+
+function canUseDrafts() { return draftRoles.has(currentUser?.role); }
+
+function setDraftStatus(message = "", tone = "info") {
+  const status = document.querySelector("#draft-status");
+  status.textContent = message;
+  status.className = `form-status ${tone === "error" ? "is-error" : ""}`.trim();
+}
+
+function intakePayloadFromForm(formElement, { draft = false } = {}) {
+  const form = new FormData(formElement);
+  const reach = String(form.get("reach") ?? "").trim();
+  return {
+    title: form.get("title"),
+    originTeam: form.get("originTeam"),
+    users: form.get("users"),
+    potentialReach: draft && !reach ? "" : Number(reach),
+    problem: form.get("problem"),
+    metric: form.get("metric"),
+    baseline: form.get("baseline"),
+    target: form.get("target"),
+    metricSource: form.get("metricSource"),
+    metricOwnerId: form.get("metricOwnerId"),
+    sponsorId: form.get("sponsorId"),
+    receivingOwnerId: form.get("receivingOwnerId"),
+    projectLeadId: form.get("projectLeadId"),
+    riskClassification: form.get("risk"),
+    transferDate: form.get("transfer"),
+    adoptionGate: form.has("adoption"),
+    evidenceGate: form.has("evidence")
+  };
+}
+
+function fillIntakeForm(content = {}) {
+  const form = document.querySelector("#intake-form");
+  const fields = {
+    title: content.title,
+    originTeam: content.originTeam,
+    problem: content.problem,
+    users: content.users,
+    reach: content.potentialReach,
+    metric: content.metric,
+    baseline: content.baseline,
+    target: content.target,
+    metricSource: content.metricSource,
+    metricOwnerId: content.metricOwnerId,
+    sponsorId: content.sponsorId,
+    receivingOwnerId: content.receivingOwnerId,
+    projectLeadId: content.projectLeadId,
+    risk: content.riskClassification,
+    transfer: content.transferDate
+  };
+  for (const [name, value] of Object.entries(fields)) {
+    const field = form.elements.namedItem(name);
+    if (field) field.value = value ?? "";
+  }
+  form.elements.namedItem("adoption").checked = Boolean(content.adoptionGate);
+  form.elements.namedItem("evidence").checked = Boolean(content.evidenceGate);
+}
+
+function renderIntakeDrafts() {
+  const panel = document.querySelector("#draft-panel");
+  const list = document.querySelector("#draft-list");
+  panel.hidden = !canUseDrafts();
+  document.querySelector("[data-save-draft]").hidden = !canUseDrafts();
+  if (!canUseDrafts()) {
+    list.innerHTML = "";
+    return;
+  }
+  if (!intakeDrafts.length) {
+    list.innerHTML = `<p class="empty-state">No saved drafts yet.</p>`;
+    return;
+  }
+  list.innerHTML = intakeDrafts.map(draft => {
+    const title = draft.content?.title || "Untitled draft";
+    const updated = draft.updatedAt ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(draft.updatedAt)) : "Not saved yet";
+    return `<article class="draft-item ${draft.id === activeDraftId ? "active" : ""}">
+      <div><h4>${escapeHtml(title)}</h4><p>Updated ${escapeHtml(updated)}</p></div>
+      <button class="decision-button" type="button" data-draft="${escapeHtml(draft.id)}">Resume</button>
+    </article>`;
+  }).join("");
+}
+
+async function loadIntakeDrafts() {
+  if (!canUseDrafts()) {
+    if (activeDraftId) document.querySelector("#intake-form").reset();
+    intakeDrafts = [];
+    activeDraftId = null;
+    renderIntakeDrafts();
+    setDraftStatus("");
+    return;
+  }
+  try {
+    const { drafts } = await api("/api/v1/intake-drafts");
+    intakeDrafts = drafts;
+    renderIntakeDrafts();
+  } catch (error) {
+    intakeDrafts = [];
+    renderIntakeDrafts();
+    document.querySelector("#draft-list").innerHTML = `<p class="audit-error">${escapeHtml(error.message)}</p>`;
+    setDraftStatus(`Drafts could not be loaded: ${error.message}`, "error");
+  }
+}
+
+async function resumeIntakeDraft(id) {
+  try {
+    const { draft } = await api(`/api/v1/intake-drafts/${encodeURIComponent(id)}`);
+    activeDraftId = draft.id;
+    fillIntakeForm(draft.content);
+    setDraftStatus(`Editing saved draft: ${draft.content?.title || "Untitled draft"}.`);
+    renderIntakeDrafts();
+    document.querySelector("input[name=title]").focus();
+  } catch (error) {
+    setDraftStatus(`Draft could not be resumed: ${error.message}`, "error");
+    showToast(error.message);
+  }
+}
+
+async function saveIntakeDraft() {
+  if (!canUseDrafts()) return setDraftStatus("You do not have permission to save intake drafts.", "error");
+  const button = document.querySelector("[data-save-draft]");
+  button.disabled = true;
+  setDraftStatus(activeDraftId ? "Saving draft changes..." : "Saving draft...");
+  try {
+    const payload = { content: intakePayloadFromForm(document.querySelector("#intake-form"), { draft: true }) };
+    const path = activeDraftId ? `/api/v1/intake-drafts/${encodeURIComponent(activeDraftId)}` : "/api/v1/intake-drafts";
+    const { draft } = await api(path, { method: activeDraftId ? "PATCH" : "POST", body: JSON.stringify(payload) });
+    activeDraftId = draft.id;
+    setDraftStatus(`Draft saved at ${new Intl.DateTimeFormat("en-US", { timeStyle: "short" }).format(new Date(draft.updatedAt))}.`);
+    await loadIntakeDrafts();
+  } catch (error) {
+    setDraftStatus(`Draft could not be saved: ${error.message}`, "error");
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function refreshPortfolio() {
@@ -244,6 +384,9 @@ document.addEventListener("click", event => {
   if (filter) { currentFilter = filter.dataset.filter; document.querySelectorAll(".filter").forEach(button => button.classList.toggle("active", button === filter)); renderProjects(); }
   const projectButton = event.target.closest("[data-project]");
   if (projectButton) openProject(projectButton.dataset.project);
+  const draftButton = event.target.closest("[data-draft]");
+  if (draftButton) resumeIntakeDraft(draftButton.dataset.draft);
+  if (event.target.closest("[data-save-draft]")) saveIntakeDraft();
   const decision = event.target.closest("[data-decision]");
   if (decision) requestDecision(decision.dataset.decision);
   if (event.target.closest("[data-select-project]")) projectAction("select");
@@ -268,16 +411,13 @@ document.querySelector("#demo-actor").addEventListener("change", async event => 
 
 document.querySelector("#intake-form").addEventListener("submit", async event => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const payload = {
-    title: form.get("title"), originTeam: form.get("originTeam"), users: form.get("users"), potentialReach: Number(form.get("reach")),
-    problem: form.get("problem"), metric: form.get("metric"), baseline: form.get("baseline"), target: form.get("target"), metricSource: form.get("metricSource"),
-    metricOwnerId: form.get("metricOwnerId"), sponsorId: form.get("sponsorId"), receivingOwnerId: form.get("receivingOwnerId"), projectLeadId: form.get("projectLeadId"),
-    riskClassification: form.get("risk"), transferDate: form.get("transfer"), adoptionGate: form.has("adoption"), evidenceGate: form.has("evidence")
-  };
+  const payload = intakePayloadFromForm(event.currentTarget);
   try {
     await api("/api/v1/intakes", { method: "POST", body: JSON.stringify(payload) });
+    activeDraftId = null;
     event.currentTarget.reset();
+    setDraftStatus("");
+    await loadIntakeDrafts();
     await refreshPortfolio();
     showView("overview");
     window.location.hash = "overview";
@@ -296,8 +436,11 @@ async function init() {
     document.querySelector("#demo-actor").value = demoActorId;
     document.querySelector("#audit-nav").hidden = !["lab-lead", "executive-sponsor", "admin"].includes(user.role);
     await refreshPortfolio();
+    await loadIntakeDrafts();
   } catch (error) {
     document.querySelector("#identity-note").textContent = "Sign-in required";
+    intakeDrafts = [];
+    renderIntakeDrafts();
     showToast(error.message);
   }
 }
