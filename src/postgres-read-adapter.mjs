@@ -269,6 +269,7 @@ export class PostgresReadAdapter {
       const projectDecisions = decisions.get(row.id) || [];
       const pending = projectDecisions.find(decision => decision.status === "requested");
       const reviewRequirements = requiredReviewTypes(row.risk_classification);
+      const projectDeliveryKit = defaultDeliveryKitItems(row.id, deliveryKit.get(row.id) || []);
       return {
         id: row.id, title: row.title, stage: row.stage, originTeam: row.origin_team, users: row.target_users,
         potentialReach: row.potential_reach, problem: row.problem, metric: row.metric, baseline: row.baseline,
@@ -281,12 +282,12 @@ export class PostgresReadAdapter {
         sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates: projectGates,
         evidence: evidence.get(row.id) || [], reviews: projectReviews, reviewRequirements,
         reviewsComplete: reviewRequirements.every(type => projectReviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status))),
-        deliveryKit: defaultDeliveryKitItems(row.id, deliveryKit.get(row.id) || []),
+        deliveryKit: projectDeliveryKit,
         decisionHistory: projectDecisions.slice(0, 5),
         pendingDecision: pending ? {
           ...pending, approvals: approvals.get(pending.id) || [],
           requiredApprovers: requiredApproverRoles(pending.outcome, { sharedPlatformImpact: Boolean(row.shared_platform_impact) }),
-          missingGates: missingGates(pending.outcome, projectGates)
+          missingGates: missingGates(pending.outcome, projectGates, { deliveryKit: projectDeliveryKit })
         } : null,
         handoff: handoffs.get(row.id) || null, createdAt: dateValue(row.created_at), createdBy: row.created_by,
         updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by,

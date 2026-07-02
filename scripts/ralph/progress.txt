@@ -301,4 +301,13 @@ Started: 2026-06-20
 - Files changed: `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: Fellow assignment UI should reflect the server-owned manager acknowledgement state directly; do not imply capacity is active from assignment creation alone.
 
+## 2026-07-02 — US-035 Require delivery readiness for transfer
+
+- Updated decision gate evaluation so transfer readiness is derived from the required delivery-kit items. Incomplete items are returned as structured gate details such as `delivery_kit:architecture` and `delivery_kit:rollback`.
+- Preserved the existing `delivery_kit` gate as an exception path and added a dedicated `delivery_kit_exception_accepted` audit event when that exception is accepted.
+- Updated transfer tests to prove finalization is blocked until required delivery-kit items are completed, and added exception audit coverage.
+- Verification: `npm test` (94 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `src/workflow-policy.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `src/postgres-read-adapter.mjs`, `src/labs-store.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: transfer readiness should be computed from required structured items; gate exceptions should be explicit audited risk acceptance, not a substitute for silently marking items complete.
+
 ---

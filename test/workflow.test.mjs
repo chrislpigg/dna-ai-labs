@@ -334,6 +334,18 @@ test("delivery-kit items are required, owner-assigned, approved-link backed, and
   } finally { dispose(); }
 });
 
+test("delivery-kit gate exceptions are audited for transfer readiness", () => {
+  const { store, dispose } = createStore();
+  try {
+    const labLead = store.actor("lab-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    store.setGate(labLead, project.id, "delivery_kit", { status: "excepted", exceptionReason: "Receiving team accepted support boundary risk for pilot transfer." });
+    const pending = store.project(project.id).gates.find(gate => gate.key === "delivery_kit");
+    assert.equal(pending.status, "excepted");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "delivery_kit_exception_accepted" && event.entityId === `${project.id}:delivery_kit`), true);
+  } finally { dispose(); }
+});
+
 test("Fellow assignments require manager acknowledgement before activation", () => {
   const { store, dispose } = createStore();
   try {
@@ -466,12 +478,21 @@ test("a transfer cannot finalize until all gates and independent approvals exist
     expectWorkflowError(() => store.setGate(labLead, project.id, "metric_evidence", { status: "complete", evidenceLink: "https://intranet.example/metric" }), "EVIDENCE_ENTRY_REQUIRED");
     expectWorkflowError(() => store.addEvidence(lead, project.id, { evidenceType: "metric_result", result: "Review time reduced", sampleSize: 0, confidence: "high", sourceLink: "https://intranet.example/metric", observedAt: "2026-06-19" }), "INVALID_SAMPLE_SIZE");
     store.addEvidence(lead, project.id, { evidenceType: "metric_result", result: "Review time reduced from 4 hours to 2 hours", sampleSize: 12, confidence: "high", sourceLink: "https://intranet.example/metric", observedAt: "2026-06-19" });
-    store.setGate(labLead, project.id, "delivery_kit", { status: "complete", evidenceLink: "https://intranet.example/delivery-kit" });
     expectWorkflowError(() => store.setGate(labLead, project.id, "reviews_complete", { status: "complete", evidenceLink: "https://intranet.example/reviews" }), "REVIEW_RECORD_REQUIRED");
     for (const reviewType of ["accessibility", "responsible_ai"]) store.setReview(store.actor("platform-reviewer"), project.id, reviewType, { status: "complete", evidenceLink: `https://intranet.example/${reviewType}` });
     expectWorkflowError(() => store.setGate(labLead, project.id, "receiving_owner_ack", { status: "complete", evidenceLink: "https://intranet.example/ack" }), "HANDOFF_REQUIRED");
     expectWorkflowError(() => store.acceptHandoff(lead, project.id, { adoptionPlanLink: "https://intranet.example/adoption", supportEndDate: "2026-12-18", followUpDate: "2026-12-20", onboardingAcknowledged: true }), "FORBIDDEN");
     store.acceptHandoff(store.actor("receiving-owner"), project.id, { adoptionPlanLink: "https://intranet.example/adoption", supportEndDate: "2026-12-18", followUpDate: "2026-12-20", onboardingAcknowledged: true });
+    assert.throws(
+      () => store.finalizeDecision(labLead, decision.id),
+      error => error instanceof WorkflowError
+        && error.code === "MISSING_GATES"
+        && error.details.missingGates.includes("delivery_kit:architecture")
+        && error.details.missingGates.includes("delivery_kit:rollback")
+    );
+    for (const itemKey of ["architecture", "evaluation", "operating_model", "onboarding", "support", "cost", "monitoring", "rollback"]) {
+      store.upsertDeliveryKitItem(lead, project.id, itemKey, { status: "complete", ownerId: "accessibility-lead", evidenceLink: `https://intranet.example/delivery-${itemKey}` });
+    }
     const result = store.finalizeDecision(labLead, decision.id);
     assert.equal(result.project.stage, stages.TRANSFERRED);
     assert.equal(result.decision.status, "finalized");

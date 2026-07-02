@@ -902,7 +902,11 @@ export class PostgresWorkflowAdapter {
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "Excepted gates require a written risk acceptance.", 422);
     if (input.status === "complete") this.validateEvidenceLink(input.evidenceLink);
     const before = project.gates.find(gate => gate.key === key) || null; const timestamp = now();
-    await this.transaction(async tx => { await tx.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null }); await tx.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status }); });
+    await this.transaction(async tx => {
+      await tx.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null });
+      await tx.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status });
+      if (key === "delivery_kit" && input.status === "excepted") await tx.appendAudit(actor.id, "delivery_kit_exception_accepted", "project_gate", `${projectId}:${key}`, before, { exceptionReason: input.exceptionReason.trim() });
+    });
     return this.project(projectId);
   }
 
@@ -1088,7 +1092,7 @@ export class PostgresWorkflowAdapter {
 
   async decision(id) {
     const decision = await this.getDecision(id); const project = await this.project(decision.projectId);
-    return { ...decision, approvals: await this.listApprovals(id), missingGates: missingGates(decision.outcome, project.gates), requiredApprovers: requiredApproverRoles(decision.outcome, project) };
+    return { ...decision, approvals: await this.listApprovals(id), missingGates: missingGates(decision.outcome, project.gates, project), requiredApprovers: requiredApproverRoles(decision.outcome, project) };
   }
 
   async requestDecision(actor, projectId, input) {
@@ -1102,7 +1106,7 @@ export class PostgresWorkflowAdapter {
       if (await tx.findOpenDecision(projectId)) throw new WorkflowError("PENDING_DECISION", "A decision is already awaiting approval.", 409);
       await tx.insertDecision({ id, projectId, outcome: input.outcome, rationale: input.rationale.trim(), status: "requested", requestedBy: actor.id, requestedAt: timestamp });
       await tx.updateProjectStage(projectId, stages.DECISION_PENDING, actor.id, timestamp);
-      await tx.appendAudit(actor.id, "decision_requested", "decision", id, null, { projectId, outcome: input.outcome, missingGates: missingGates(input.outcome, project.gates) });
+      await tx.appendAudit(actor.id, "decision_requested", "decision", id, null, { projectId, outcome: input.outcome, missingGates: missingGates(input.outcome, project.gates, project) });
     });
     return this.decision(id);
   }

@@ -72,9 +72,14 @@ export function requireTransition(project, outcome) {
   }
 }
 
-export function missingGates(outcome, gates) {
+export function missingGates(outcome, gates, project = {}) {
   const complete = new Set(gates.filter(gate => ["complete", "excepted"].includes(gate.status)).map(gate => gate.key));
-  return (decisionGateRequirements[outcome] || []).filter(key => !complete.has(key));
+  const missing = (decisionGateRequirements[outcome] || []).filter(key => !complete.has(key));
+  if (outcome !== outcomes.TRANSFER || !missing.includes("delivery_kit")) return missing;
+  const unmetDeliveryItems = (project.deliveryKit || [])
+    .filter(item => !["complete", "excepted"].includes(item.status))
+    .map(item => `delivery_kit:${item.itemKey}`);
+  return missing.flatMap(key => key === "delivery_kit" ? unmetDeliveryItems : [key]);
 }
 
 export function requiredApproverRoles(outcome, project) {

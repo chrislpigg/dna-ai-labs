@@ -599,6 +599,7 @@ export class WorkflowService {
     this.storage.transaction(() => {
       this.storage.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null });
       this.storage.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status });
+      if (key === "delivery_kit" && input.status === "excepted") this.storage.appendAudit(actor.id, "delivery_kit_exception_accepted", "project_gate", `${projectId}:${key}`, before, { exceptionReason: input.exceptionReason.trim() });
     });
     return this.project(projectId);
   }
@@ -792,7 +793,7 @@ export class WorkflowService {
     this.storage.transaction(() => {
       this.storage.insertDecision({ id, projectId, outcome: input.outcome, rationale: input.rationale.trim(), status: "requested", requestedBy: actor.id, requestedAt: timestamp });
       this.storage.updateProjectStage(projectId, stages.DECISION_PENDING, actor.id, timestamp);
-      this.storage.appendAudit(actor.id, "decision_requested", "decision", id, null, { projectId, outcome: input.outcome, missingGates: missingGates(input.outcome, project.gates) });
+      this.storage.appendAudit(actor.id, "decision_requested", "decision", id, null, { projectId, outcome: input.outcome, missingGates: missingGates(input.outcome, project.gates, project) });
     });
     return this.decision(id);
   }
@@ -801,7 +802,7 @@ export class WorkflowService {
     const decision = this.storage.getDecision(id);
     if (!decision) throw new WorkflowError("NOT_FOUND", "Decision not found.", 404);
     const project = this.project(decision.projectId);
-    return { ...decision, approvals: this.storage.listApprovals(id), missingGates: missingGates(decision.outcome, project.gates), requiredApprovers: requiredApproverRoles(decision.outcome, project) };
+    return { ...decision, approvals: this.storage.listApprovals(id), missingGates: missingGates(decision.outcome, project.gates, project), requiredApprovers: requiredApproverRoles(decision.outcome, project) };
   }
 
   approveDecision(actor, id, input) {
