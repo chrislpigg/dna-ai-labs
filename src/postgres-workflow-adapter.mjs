@@ -9,6 +9,7 @@ import { DisabledDirectoryAdapter, requireActiveDirectoryPerson } from "./direct
 import { enrichProjectDirectoryContext } from "./directory-context.mjs";
 import { defaultDeliveryKitItems, normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
+import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifier.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -298,53 +299,79 @@ class PostgresTransaction {
   }
 
   async upsertGate(gate) {
-    await this.query(`INSERT INTO project_gates (project_id, organization_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    await this.query(`INSERT INTO project_gates (
+        project_id, organization_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (project_id, gate_key) DO UPDATE SET status = EXCLUDED.status, evidence_link = EXCLUDED.evidence_link,
-        completed_by = EXCLUDED.completed_by, completed_at = EXCLUDED.completed_at, exception_reason = EXCLUDED.exception_reason
+        completed_by = EXCLUDED.completed_by, completed_at = EXCLUDED.completed_at, exception_reason = EXCLUDED.exception_reason,
+        artifact_verification_status = EXCLUDED.artifact_verification_status,
+        artifact_verified_at = EXCLUDED.artifact_verified_at,
+        artifact_verification_method = EXCLUDED.artifact_verification_method
       WHERE project_gates.organization_id = EXCLUDED.organization_id`, [
-      gate.projectId, this.organizationId, gate.key, gate.status, gate.evidenceLink, gate.completedBy, gate.completedAt, gate.exceptionReason
+      gate.projectId, this.organizationId, gate.key, gate.status, gate.evidenceLink, gate.completedBy, gate.completedAt, gate.exceptionReason,
+      gate.artifactVerificationStatus || null, gate.artifactVerifiedAt || null, gate.artifactVerificationMethod || null
     ]);
   }
 
   async insertEvidence(evidence) {
-    await this.query(`INSERT INTO evidence_entries (id, organization_id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, [
+    await this.query(`INSERT INTO evidence_entries (
+        id, organization_id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`, [
       evidence.id, this.organizationId, evidence.projectId, evidence.evidenceType, evidence.result, evidence.sampleSize,
-      evidence.confidence, evidence.sourceLink, evidence.observedAt, evidence.createdBy, evidence.createdAt
+      evidence.confidence, evidence.sourceLink, evidence.observedAt, evidence.createdBy, evidence.createdAt,
+      evidence.artifactVerificationStatus || null, evidence.artifactVerifiedAt || null, evidence.artifactVerificationMethod || null
     ]);
   }
 
   async upsertReview(review) {
-    await this.query(`INSERT INTO project_reviews (project_id, organization_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    await this.query(`INSERT INTO project_reviews (
+        project_id, organization_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (project_id, review_type) DO UPDATE SET status = EXCLUDED.status, evidence_link = EXCLUDED.evidence_link,
-        completed_by = EXCLUDED.completed_by, completed_at = EXCLUDED.completed_at, exception_reason = EXCLUDED.exception_reason
+        completed_by = EXCLUDED.completed_by, completed_at = EXCLUDED.completed_at, exception_reason = EXCLUDED.exception_reason,
+        artifact_verification_status = EXCLUDED.artifact_verification_status,
+        artifact_verified_at = EXCLUDED.artifact_verified_at,
+        artifact_verification_method = EXCLUDED.artifact_verification_method
       WHERE project_reviews.organization_id = EXCLUDED.organization_id`, [
-      review.projectId, this.organizationId, review.reviewType, review.status, review.evidenceLink, review.completedBy, review.completedAt, review.exceptionReason
+      review.projectId, this.organizationId, review.reviewType, review.status, review.evidenceLink, review.completedBy, review.completedAt, review.exceptionReason,
+      review.artifactVerificationStatus || null, review.artifactVerifiedAt || null, review.artifactVerificationMethod || null
     ]);
   }
 
   async listReviews(projectId) {
-    const result = await this.query("SELECT review_type AS \"reviewType\", status FROM project_reviews WHERE organization_id = $1 AND project_id = $2", [this.organizationId, projectId]);
+    const result = await this.query(`SELECT review_type AS "reviewType", status, evidence_link AS "evidenceLink",
+      artifact_verification_status AS "artifactVerificationStatus", artifact_verified_at AS "artifactVerifiedAt",
+      artifact_verification_method AS "artifactVerificationMethod"
+      FROM project_reviews WHERE organization_id = $1 AND project_id = $2`, [this.organizationId, projectId]);
     return result.rows || [];
   }
 
   async listDeliveryKitItems(projectId) {
     const result = await this.query(`SELECT project_id AS "projectId", item_key AS "itemKey", status, owner_id AS "ownerId",
-      evidence_link AS "evidenceLink", accepted_at AS "acceptedAt", accepted_by AS "acceptedBy", updated_at AS "updatedAt", updated_by AS "updatedBy"
+      evidence_link AS "evidenceLink", accepted_at AS "acceptedAt", accepted_by AS "acceptedBy", updated_at AS "updatedAt", updated_by AS "updatedBy",
+      artifact_verification_status AS "artifactVerificationStatus", artifact_verified_at AS "artifactVerifiedAt",
+      artifact_verification_method AS "artifactVerificationMethod"
       FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 ORDER BY item_key`, [this.organizationId, projectId]);
     return result.rows || [];
   }
 
   async upsertDeliveryKitItem(item) {
-    await this.query(`INSERT INTO delivery_kit_items (project_id, organization_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    await this.query(`INSERT INTO delivery_kit_items (
+        project_id, organization_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (project_id, organization_id, item_key) DO UPDATE SET status = EXCLUDED.status, owner_id = EXCLUDED.owner_id,
         evidence_link = EXCLUDED.evidence_link, accepted_at = EXCLUDED.accepted_at, accepted_by = EXCLUDED.accepted_by,
-        updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`, [
+        updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by,
+        artifact_verification_status = EXCLUDED.artifact_verification_status,
+        artifact_verified_at = EXCLUDED.artifact_verified_at,
+        artifact_verification_method = EXCLUDED.artifact_verification_method`, [
       item.projectId, this.organizationId, item.itemKey, item.status, item.ownerId, item.evidenceLink,
-      item.acceptedAt, item.acceptedBy, item.updatedAt, item.updatedBy
+      item.acceptedAt, item.acceptedBy, item.updatedAt, item.updatedBy,
+      item.artifactVerificationStatus || null, item.artifactVerifiedAt || null, item.artifactVerificationMethod || null
     ]);
   }
 
@@ -399,21 +426,28 @@ class PostgresTransaction {
   async getHandoff(projectId) {
     const result = await this.query(`SELECT project_id AS "projectId", receiving_owner_id AS "receivingOwnerId", status,
       adoption_plan_link AS "adoptionPlanLink", support_end_date AS "supportEndDate", follow_up_date AS "followUpDate",
-      onboarding_acknowledged AS "onboardingAcknowledged", accepted_by AS "acceptedBy", accepted_at AS "acceptedAt"
+      onboarding_acknowledged AS "onboardingAcknowledged", accepted_by AS "acceptedBy", accepted_at AS "acceptedAt",
+      artifact_verification_status AS "artifactVerificationStatus", artifact_verified_at AS "artifactVerifiedAt",
+      artifact_verification_method AS "artifactVerificationMethod"
       FROM handoffs WHERE organization_id = $1 AND project_id = $2`, [this.organizationId, projectId]);
     const handoff = result.rows?.[0];
     return handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null;
   }
 
   async upsertHandoff(handoff) {
-    await this.query(`INSERT INTO handoffs (project_id, organization_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date, onboarding_acknowledged, accepted_by, accepted_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    await this.query(`INSERT INTO handoffs (
+        project_id, organization_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date,
+        onboarding_acknowledged, accepted_by, accepted_at, artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (project_id) DO UPDATE SET status = EXCLUDED.status, adoption_plan_link = EXCLUDED.adoption_plan_link,
         support_end_date = EXCLUDED.support_end_date, follow_up_date = EXCLUDED.follow_up_date,
-        onboarding_acknowledged = EXCLUDED.onboarding_acknowledged, accepted_by = EXCLUDED.accepted_by, accepted_at = EXCLUDED.accepted_at
+        onboarding_acknowledged = EXCLUDED.onboarding_acknowledged, accepted_by = EXCLUDED.accepted_by,
+        accepted_at = EXCLUDED.accepted_at, artifact_verification_status = EXCLUDED.artifact_verification_status,
+        artifact_verified_at = EXCLUDED.artifact_verified_at, artifact_verification_method = EXCLUDED.artifact_verification_method
       WHERE handoffs.organization_id = EXCLUDED.organization_id`, [
       handoff.projectId, this.organizationId, handoff.receivingOwnerId, handoff.status, handoff.adoptionPlanLink,
-      handoff.supportEndDate, handoff.followUpDate, handoff.onboardingAcknowledged, handoff.acceptedBy, handoff.acceptedAt
+      handoff.supportEndDate, handoff.followUpDate, handoff.onboardingAcknowledged, handoff.acceptedBy, handoff.acceptedAt,
+      handoff.artifactVerificationStatus || null, handoff.artifactVerifiedAt || null, handoff.artifactVerificationMethod || null
     ]);
   }
 
@@ -471,13 +505,14 @@ class PostgresTransaction {
 
 /** Authoritative PostgreSQL workflow adapter. Every mutation includes its audit event in one transaction. */
 export class PostgresWorkflowAdapter {
-  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter() } = {}) {
+  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier } = {}) {
     if (!queryable || typeof queryable.query !== "function" || typeof queryable.connect !== "function") throw new TypeError("A PostgreSQL pool with connect() is required.");
     this.queryable = queryable;
     this.organizationId = requiredText(organizationId, "organizationId");
     this.reads = new PostgresReadAdapter({ queryable, organizationId: this.organizationId });
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
+    this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
   }
 
   async transaction(work) {
@@ -614,9 +649,11 @@ export class PostgresWorkflowAdapter {
   }
 
   validateEvidenceLink(value) {
-    let url;
-    try { url = new URL(value); } catch { throw new WorkflowError("INVALID_EVIDENCE_LINK", "Evidence must be a valid approved URL.", 422); }
-    if (!this.approvedArtifactOrigins.has(url.origin)) throw new WorkflowError("UNAPPROVED_EVIDENCE_LINK", "Evidence must link to an approved internal system.", 422);
+    this.artifactVerifier.validateAllowedUrl(value);
+  }
+
+  async verifyArtifactLink(value, context = {}) {
+    return this.artifactVerifier.verifyLink(value, context);
   }
 
   validateFutureDate(value, label) {
@@ -900,11 +937,11 @@ export class PostgresWorkflowAdapter {
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_GATE_STATUS", "Gate status is invalid.", 422);
     if (input.status === "complete" && !String(input.evidenceLink ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE", "Completed gates require an approved evidence link.", 422);
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "Excepted gates require a written risk acceptance.", 422);
-    if (input.status === "complete") this.validateEvidenceLink(input.evidenceLink);
+    const verification = input.status === "complete" ? await this.verifyArtifactLink(input.evidenceLink, { entityType: "project_gate", projectId, key }) : null;
     const before = project.gates.find(gate => gate.key === key) || null; const timestamp = now();
     await this.transaction(async tx => {
-      await tx.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null });
-      await tx.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status });
+      await tx.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null, ...artifactVerificationFields(verification) });
+      await tx.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status, artifactVerificationStatus: verification?.status || null });
       if (key === "delivery_kit" && input.status === "excepted") await tx.appendAudit(actor.id, "delivery_kit_exception_accepted", "project_gate", `${projectId}:${key}`, before, { exceptionReason: input.exceptionReason.trim() });
     });
     return this.project(projectId);
@@ -919,14 +956,14 @@ export class PostgresWorkflowAdapter {
     if (!String(input.result ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE_RESULT", "Evidence requires a result summary.", 422);
     if (!Number.isInteger(Number(input.sampleSize)) || Number(input.sampleSize) < 1) throw new WorkflowError("INVALID_SAMPLE_SIZE", "Evidence requires a sample size of at least one.", 422);
     if (!["low", "medium", "high"].includes(input.confidence)) throw new WorkflowError("INVALID_CONFIDENCE", "Evidence confidence is invalid.", 422);
-    this.validateEvidenceLink(input.sourceLink);
+    const verification = await this.verifyArtifactLink(input.sourceLink, { entityType: "evidence", projectId, evidenceType: input.evidenceType });
     const observed = new Date(`${input.observedAt}T12:00:00`);
     if (!input.observedAt || Number.isNaN(observed.getTime()) || observed > new Date()) throw new WorkflowError("INVALID_OBSERVED_DATE", "Evidence date must be today or earlier.", 422);
     const id = randomUUID(); const timestamp = now();
     await this.transaction(async tx => {
-      await tx.insertEvidence({ id, projectId, evidenceType: input.evidenceType, result: input.result.trim(), sampleSize: Number(input.sampleSize), confidence: input.confidence, sourceLink: input.sourceLink.trim(), observedAt: input.observedAt, createdBy: actor.id, createdAt: timestamp });
-      if (input.evidenceType === "metric_result") await tx.upsertGate({ projectId, key: "metric_evidence", status: "complete", evidenceLink: input.sourceLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null });
-      await tx.appendAudit(actor.id, "evidence_recorded", "evidence", id, null, { projectId, evidenceType: input.evidenceType, confidence: input.confidence });
+      await tx.insertEvidence({ id, projectId, evidenceType: input.evidenceType, result: input.result.trim(), sampleSize: Number(input.sampleSize), confidence: input.confidence, sourceLink: input.sourceLink.trim(), observedAt: input.observedAt, createdBy: actor.id, createdAt: timestamp, ...artifactVerificationFields(verification) });
+      if (input.evidenceType === "metric_result") await tx.upsertGate({ projectId, key: "metric_evidence", status: "complete", evidenceLink: input.sourceLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
+      await tx.appendAudit(actor.id, "evidence_recorded", "evidence", id, null, { projectId, evidenceType: input.evidenceType, confidence: input.confidence, artifactVerificationStatus: verification.status });
     });
     return this.project(projectId);
   }
@@ -937,15 +974,15 @@ export class PostgresWorkflowAdapter {
     if (![stages.INCUBATING, stages.DECISION_PENDING].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Reviews can be recorded only during incubation or decision review.", 409);
     if (!reviewTypes.includes(reviewType) || !project.reviewRequirements.includes(reviewType)) throw new WorkflowError("INVALID_REVIEW_TYPE", "This review is not required for the project risk classification.", 422);
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_REVIEW_STATUS", "Review status is invalid.", 422);
-    if (input.status === "complete") this.validateEvidenceLink(input.evidenceLink);
+    const verification = input.status === "complete" ? await this.verifyArtifactLink(input.evidenceLink, { entityType: "project_review", projectId, reviewType }) : null;
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "An excepted review requires written risk acceptance.", 422);
     const before = project.reviews.find(review => review.reviewType === reviewType) || null; const timestamp = now();
     await this.transaction(async tx => {
-      await tx.upsertReview({ projectId, reviewType, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null });
+      await tx.upsertReview({ projectId, reviewType, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null, ...artifactVerificationFields(verification) });
       const reviews = await tx.listReviews(projectId);
       const complete = project.reviewRequirements.every(type => reviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
-      await tx.upsertGate({ projectId, key: "reviews_complete", status: complete ? "complete" : "incomplete", evidenceLink: complete ? input.evidenceLink?.trim() || null : null, completedBy: complete ? actor.id : null, completedAt: complete ? timestamp : null, exceptionReason: null });
-      await tx.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete });
+      await tx.upsertGate({ projectId, key: "reviews_complete", status: complete ? "complete" : "incomplete", evidenceLink: complete ? input.evidenceLink?.trim() || null : null, completedBy: complete ? actor.id : null, completedAt: complete ? timestamp : null, exceptionReason: null, ...artifactVerificationFields(complete ? verification : null) });
+      await tx.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete, artifactVerificationStatus: verification?.status || null });
     });
     return this.project(projectId);
   }
@@ -962,7 +999,9 @@ export class PostgresWorkflowAdapter {
     await this.project(projectId);
     return defaultDeliveryKitItems(projectId, await this.reads.query(
       `SELECT project_id AS "projectId", item_key AS "itemKey", status, owner_id AS "ownerId", evidence_link AS "evidenceLink",
-        accepted_at AS "acceptedAt", accepted_by AS "acceptedBy", updated_at AS "updatedAt", updated_by AS "updatedBy"
+        accepted_at AS "acceptedAt", accepted_by AS "acceptedBy", updated_at AS "updatedAt", updated_by AS "updatedBy",
+        artifact_verification_status AS "artifactVerificationStatus", artifact_verified_at AS "artifactVerifiedAt",
+        artifact_verification_method AS "artifactVerificationMethod"
        FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 ORDER BY item_key`,
       [this.organizationId, projectId]
     ).then(result => result.rows || []));
@@ -974,17 +1013,18 @@ export class PostgresWorkflowAdapter {
     const key = normalizeDeliveryKitItemKey(itemKey);
     const item = normalizeDeliveryKitInput(input);
     await this.actor(item.ownerId);
-    if (item.evidenceLink) this.validateEvidenceLink(item.evidenceLink);
+    const verification = item.evidenceLink ? await this.verifyArtifactLink(item.evidenceLink, { entityType: "delivery_kit_item", projectId, itemKey: key }) : null;
     const before = project.deliveryKit.find(existing => existing.itemKey === key) || null;
     const timestamp = now();
     const next = {
       projectId, itemKey: key, status: item.status, ownerId: item.ownerId, evidenceLink: item.evidenceLink,
       acceptedAt: item.status === "complete" ? timestamp : null, acceptedBy: item.status === "complete" ? actor.id : null,
-      updatedAt: timestamp, updatedBy: actor.id
+      updatedAt: timestamp, updatedBy: actor.id,
+      ...artifactVerificationFields(verification)
     };
     await this.transaction(async tx => {
       await tx.upsertDeliveryKitItem(next);
-      await tx.appendAudit(actor.id, "delivery_kit_item_updated", "delivery_kit_item", `${projectId}:${key}`, before, { itemKey: key, status: next.status, ownerId: next.ownerId });
+      await tx.appendAudit(actor.id, "delivery_kit_item_updated", "delivery_kit_item", `${projectId}:${key}`, before, { itemKey: key, status: next.status, ownerId: next.ownerId, artifactVerificationStatus: verification?.status || null });
     });
     return (await this.project(projectId)).deliveryKit.find(existing => existing.itemKey === key);
   }
@@ -1066,14 +1106,15 @@ export class PostgresWorkflowAdapter {
     if (!project.receivingOwner || project.receivingOwner.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the named receiving owner can accept this handoff.", 403);
     if (!project.pendingDecision || project.pendingDecision.outcome !== outcomes.TRANSFER) throw new WorkflowError("INVALID_HANDOFF_STATE", "A transfer decision request is required before handoff acceptance.", 409);
     if (!input.onboardingAcknowledged) throw new WorkflowError("ONBOARDING_REQUIRED", "Receiving owner must acknowledge onboarding before accepting handoff.", 422);
-    this.validateEvidenceLink(input.adoptionPlanLink); this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
+    const verification = await this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId });
+    this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
     const timestamp = now();
     await this.transaction(async tx => {
       const existing = await tx.getHandoff(projectId);
       if (existing?.status === "accepted") throw new WorkflowError("HANDOFF_ALREADY_ACCEPTED", "This handoff has already been accepted.", 409);
-      await tx.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp });
-      for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) await tx.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null });
-      await tx.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate });
+      await tx.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp, ...artifactVerificationFields(verification) });
+      for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) await tx.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
+      await tx.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, artifactVerificationStatus: verification.status });
     });
     return this.project(projectId);
   }
@@ -1169,6 +1210,6 @@ export class PostgresWorkflowAdapter {
   }
 }
 
-export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, PoolConstructor = Pool } = {}) {
-  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter });
+export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, PoolConstructor = Pool } = {}) {
+  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier });
 }

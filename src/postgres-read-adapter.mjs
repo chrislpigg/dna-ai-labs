@@ -216,34 +216,46 @@ export class PostgresReadAdapter {
     if (!rows.length) return [];
     const projectIds = rows.map(row => row.id);
     const [gatesResult, evidenceResult, reviewsResult, deliveryKitResult, decisionsResult, approvalsResult, handoffsResult] = await Promise.all([
-      this.query("SELECT project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason FROM project_gates WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY gate_key", [this.organizationId, projectIds]),
-      this.query("SELECT id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at FROM evidence_entries WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY observed_at DESC, created_at DESC", [this.organizationId, projectIds]),
-      this.query("SELECT project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason FROM project_reviews WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY review_type", [this.organizationId, projectIds]),
-      this.query("SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by FROM delivery_kit_items WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY item_key", [this.organizationId, projectIds]),
+      this.query("SELECT project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM project_gates WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY gate_key", [this.organizationId, projectIds]),
+      this.query("SELECT id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM evidence_entries WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY observed_at DESC, created_at DESC", [this.organizationId, projectIds]),
+      this.query("SELECT project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM project_reviews WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY review_type", [this.organizationId, projectIds]),
+      this.query("SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM delivery_kit_items WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY item_key", [this.organizationId, projectIds]),
       this.query("SELECT id, project_id, outcome, rationale, status, requested_by, requested_at, finalized_by, finalized_at FROM decisions WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY requested_at DESC", [this.organizationId, projectIds]),
       this.query("SELECT a.decision_id, a.approver_id, a.approver_role, a.result, a.comment, a.created_at FROM approvals a JOIN decisions d ON d.id = a.decision_id AND d.organization_id = a.organization_id WHERE a.organization_id = $1 AND d.project_id = ANY($2::text[]) ORDER BY a.created_at", [this.organizationId, projectIds]),
-      this.query("SELECT project_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date, onboarding_acknowledged, accepted_by, accepted_at FROM handoffs WHERE organization_id = $1 AND project_id = ANY($2::text[])", [this.organizationId, projectIds])
+      this.query("SELECT project_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date, onboarding_acknowledged, accepted_by, accepted_at, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM handoffs WHERE organization_id = $1 AND project_id = ANY($2::text[])", [this.organizationId, projectIds])
     ]);
 
     const gates = new Map();
     for (const row of asRows(gatesResult)) appendByProject(gates, row.project_id, {
       key: row.gate_key, status: row.status, evidenceLink: row.evidence_link, completedBy: row.completed_by,
-      completedAt: dateValue(row.completed_at), exceptionReason: row.exception_reason
+      completedAt: dateValue(row.completed_at), exceptionReason: row.exception_reason,
+      artifactVerificationStatus: row.artifact_verification_status || null,
+      artifactVerifiedAt: dateValue(row.artifact_verified_at),
+      artifactVerificationMethod: row.artifact_verification_method || null
     });
     const evidence = new Map();
     for (const row of asRows(evidenceResult)) appendByProject(evidence, row.project_id, {
       id: row.id, evidenceType: row.evidence_type, result: row.result, sampleSize: row.sample_size, confidence: row.confidence,
-      sourceLink: row.source_link, observedAt: dateValue(row.observed_at), createdBy: row.created_by, createdAt: dateValue(row.created_at)
+      sourceLink: row.source_link, observedAt: dateValue(row.observed_at), createdBy: row.created_by, createdAt: dateValue(row.created_at),
+      artifactVerificationStatus: row.artifact_verification_status || null,
+      artifactVerifiedAt: dateValue(row.artifact_verified_at),
+      artifactVerificationMethod: row.artifact_verification_method || null
     });
     const reviews = new Map();
     for (const row of asRows(reviewsResult)) appendByProject(reviews, row.project_id, {
       reviewType: row.review_type, status: row.status, evidenceLink: row.evidence_link, completedBy: row.completed_by,
-      completedAt: dateValue(row.completed_at), exceptionReason: row.exception_reason
+      completedAt: dateValue(row.completed_at), exceptionReason: row.exception_reason,
+      artifactVerificationStatus: row.artifact_verification_status || null,
+      artifactVerifiedAt: dateValue(row.artifact_verified_at),
+      artifactVerificationMethod: row.artifact_verification_method || null
     });
     const deliveryKit = new Map();
     for (const row of asRows(deliveryKitResult)) appendByProject(deliveryKit, row.project_id, {
       projectId: row.project_id, itemKey: row.item_key, status: row.status, ownerId: row.owner_id, evidenceLink: row.evidence_link,
-      acceptedAt: dateValue(row.accepted_at), acceptedBy: row.accepted_by, updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by
+      acceptedAt: dateValue(row.accepted_at), acceptedBy: row.accepted_by, updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by,
+      artifactVerificationStatus: row.artifact_verification_status || null,
+      artifactVerifiedAt: dateValue(row.artifact_verified_at),
+      artifactVerificationMethod: row.artifact_verification_method || null
     });
     const decisions = new Map();
     for (const row of asRows(decisionsResult)) appendByProject(decisions, row.project_id, {
@@ -260,7 +272,10 @@ export class PostgresReadAdapter {
     for (const row of asRows(handoffsResult)) handoffs.set(row.project_id, {
       projectId: row.project_id, receivingOwnerId: row.receiving_owner_id, status: row.status, adoptionPlanLink: row.adoption_plan_link,
       supportEndDate: dateValue(row.support_end_date), followUpDate: dateValue(row.follow_up_date), onboardingAcknowledged: Boolean(row.onboarding_acknowledged),
-      acceptedBy: row.accepted_by, acceptedAt: dateValue(row.accepted_at)
+      acceptedBy: row.accepted_by, acceptedAt: dateValue(row.accepted_at),
+      artifactVerificationStatus: row.artifact_verification_status || null,
+      artifactVerifiedAt: dateValue(row.artifact_verified_at),
+      artifactVerificationMethod: row.artifact_verification_method || null
     });
 
     return rows.map(row => {

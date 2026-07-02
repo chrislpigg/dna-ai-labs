@@ -122,22 +122,26 @@ export class SqliteLabsStorage {
       CREATE TABLE IF NOT EXISTS project_gates (
         project_id TEXT NOT NULL, gate_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'incomplete', evidence_link TEXT,
         completed_by TEXT, completed_at TEXT, exception_reason TEXT,
+        artifact_verification_status TEXT, artifact_verified_at TEXT, artifact_verification_method TEXT,
         PRIMARY KEY(project_id, gate_key), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
       CREATE TABLE IF NOT EXISTS evidence_entries (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, evidence_type TEXT NOT NULL, result TEXT NOT NULL,
         sample_size INTEGER NOT NULL, confidence TEXT NOT NULL, source_link TEXT NOT NULL, observed_at TEXT NOT NULL,
         created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        artifact_verification_status TEXT, artifact_verified_at TEXT, artifact_verification_method TEXT,
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(created_by) REFERENCES users(id)
       );
       CREATE TABLE IF NOT EXISTS project_reviews (
         project_id TEXT NOT NULL, review_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'incomplete',
         evidence_link TEXT, completed_by TEXT, completed_at TEXT, exception_reason TEXT,
+        artifact_verification_status TEXT, artifact_verified_at TEXT, artifact_verification_method TEXT,
         PRIMARY KEY(project_id, review_type), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
       CREATE TABLE IF NOT EXISTS delivery_kit_items (
         project_id TEXT NOT NULL, item_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'not_started',
         owner_id TEXT, evidence_link TEXT, accepted_at TEXT, accepted_by TEXT, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        artifact_verification_status TEXT, artifact_verified_at TEXT, artifact_verification_method TEXT,
         PRIMARY KEY(project_id, item_key),
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
         FOREIGN KEY(owner_id) REFERENCES users(id), FOREIGN KEY(accepted_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
@@ -165,6 +169,7 @@ export class SqliteLabsStorage {
         project_id TEXT PRIMARY KEY, receiving_owner_id TEXT NOT NULL, status TEXT NOT NULL,
         adoption_plan_link TEXT NOT NULL, support_end_date TEXT NOT NULL, follow_up_date TEXT NOT NULL,
         onboarding_acknowledged INTEGER NOT NULL DEFAULT 0, accepted_by TEXT, accepted_at TEXT,
+        artifact_verification_status TEXT, artifact_verified_at TEXT, artifact_verification_method TEXT,
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(receiving_owner_id) REFERENCES users(id)
       );
       CREATE TABLE IF NOT EXISTS audit_events (
@@ -191,6 +196,11 @@ export class SqliteLabsStorage {
     this.ensureColumn("audit_events", "audit_sequence", "INTEGER");
     this.ensureColumn("audit_events", "previous_hash", "TEXT");
     this.ensureColumn("audit_events", "event_hash", "TEXT");
+    for (const table of ["project_gates", "evidence_entries", "project_reviews", "delivery_kit_items", "handoffs"]) {
+      this.ensureColumn(table, "artifact_verification_status", "TEXT");
+      this.ensureColumn(table, "artifact_verified_at", "TEXT");
+      this.ensureColumn(table, "artifact_verification_method", "TEXT");
+    }
   }
 
   ensureColumn(table, column, definition) {
@@ -334,17 +344,17 @@ export class SqliteLabsStorage {
   }
 
   serializeProject(row) {
-    const gates = this.db.prepare("SELECT gate_key AS key, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason FROM project_gates WHERE project_id = ? ORDER BY gate_key").all(row.id);
-    const evidence = this.db.prepare("SELECT id, evidence_type AS evidenceType, result, sample_size AS sampleSize, confidence, source_link AS sourceLink, observed_at AS observedAt, created_by AS createdBy, created_at AS createdAt FROM evidence_entries WHERE project_id = ? ORDER BY observed_at DESC, created_at DESC").all(row.id);
+    const gates = this.db.prepare("SELECT gate_key AS key, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason, artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod FROM project_gates WHERE project_id = ? ORDER BY gate_key").all(row.id);
+    const evidence = this.db.prepare("SELECT id, evidence_type AS evidenceType, result, sample_size AS sampleSize, confidence, source_link AS sourceLink, observed_at AS observedAt, created_by AS createdBy, created_at AS createdAt, artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod FROM evidence_entries WHERE project_id = ? ORDER BY observed_at DESC, created_at DESC").all(row.id);
     const decisionHistory = this.db.prepare("SELECT id, outcome, rationale, status, requested_at AS requestedAt, finalized_at AS finalizedAt FROM decisions WHERE project_id = ? ORDER BY requested_at DESC LIMIT 5").all(row.id);
     const reviewRequirements = requiredReviewTypes(row.risk_classification);
-    const reviews = this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(row.id);
+    const reviews = this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason, artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(row.id);
     const deliveryKit = this.listDeliveryKitItems(row.id);
     const reviewsComplete = reviewRequirements.every(type => reviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
     const decision = this.db.prepare("SELECT id, outcome, rationale, status, requested_by AS requestedBy, requested_at AS requestedAt FROM decisions WHERE project_id = ? AND status = 'requested' ORDER BY requested_at DESC LIMIT 1").get(row.id);
     const decisionApprovals = decision ? this.db.prepare("SELECT approver_id AS approverId, approver_role AS approverRole, result, comment, created_at AS createdAt FROM approvals WHERE decision_id = ? ORDER BY created_at").all(decision.id) : [];
     const pendingDecision = decision ? { ...decision, approvals: decisionApprovals, requiredApprovers: requiredApproverRoles(decision.outcome, { sharedPlatformImpact: Boolean(row.shared_platform_impact) }), missingGates: missingGates(decision.outcome, gates, { deliveryKit }) } : null;
-    const handoff = this.db.prepare("SELECT project_id AS projectId, receiving_owner_id AS receivingOwnerId, status, adoption_plan_link AS adoptionPlanLink, support_end_date AS supportEndDate, follow_up_date AS followUpDate, onboarding_acknowledged AS onboardingAcknowledged, accepted_by AS acceptedBy, accepted_at AS acceptedAt FROM handoffs WHERE project_id = ?").get(row.id) || null;
+    const handoff = this.db.prepare("SELECT project_id AS projectId, receiving_owner_id AS receivingOwnerId, status, adoption_plan_link AS adoptionPlanLink, support_end_date AS supportEndDate, follow_up_date AS followUpDate, onboarding_acknowledged AS onboardingAcknowledged, accepted_by AS acceptedBy, accepted_at AS acceptedAt, artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod FROM handoffs WHERE project_id = ?").get(row.id) || null;
     return {
       id: row.id, title: row.title, stage: row.stage, originTeam: row.origin_team, users: row.target_users, potentialReach: row.potential_reach,
       problem: row.problem, metric: row.metric, baseline: row.baseline, target: row.target, metricSource: row.metric_source, metricOwnerId: row.metric_owner_id,
@@ -803,24 +813,48 @@ export class SqliteLabsStorage {
   }
 
   upsertGate(gate) {
-    this.db.prepare(`INSERT INTO project_gates (project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, gate_key) DO UPDATE SET status = excluded.status, evidence_link = excluded.evidence_link, completed_by = excluded.completed_by, completed_at = excluded.completed_at, exception_reason = excluded.exception_reason`)
-      .run(gate.projectId, gate.key, gate.status, gate.evidenceLink, gate.completedBy, gate.completedAt, gate.exceptionReason);
+    this.db.prepare(`INSERT INTO project_gates (
+        project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, gate_key) DO UPDATE SET status = excluded.status, evidence_link = excluded.evidence_link,
+        completed_by = excluded.completed_by, completed_at = excluded.completed_at, exception_reason = excluded.exception_reason,
+        artifact_verification_status = excluded.artifact_verification_status,
+        artifact_verified_at = excluded.artifact_verified_at,
+        artifact_verification_method = excluded.artifact_verification_method`)
+      .run(gate.projectId, gate.key, gate.status, gate.evidenceLink, gate.completedBy, gate.completedAt, gate.exceptionReason,
+        gate.artifactVerificationStatus || null, gate.artifactVerifiedAt || null, gate.artifactVerificationMethod || null);
   }
 
   insertEvidence(evidence) {
-    this.db.prepare("INSERT INTO evidence_entries (id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(evidence.id, evidence.projectId, evidence.evidenceType, evidence.result, evidence.sampleSize, evidence.confidence, evidence.sourceLink, evidence.observedAt, evidence.createdBy, evidence.createdAt);
+    this.db.prepare(`INSERT INTO evidence_entries (
+      id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at,
+      artifact_verification_status, artifact_verified_at, artifact_verification_method
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(evidence.id, evidence.projectId, evidence.evidenceType, evidence.result, evidence.sampleSize, evidence.confidence,
+        evidence.sourceLink, evidence.observedAt, evidence.createdBy, evidence.createdAt,
+        evidence.artifactVerificationStatus || null, evidence.artifactVerifiedAt || null, evidence.artifactVerificationMethod || null);
   }
 
   upsertReview(review) {
-    this.db.prepare(`INSERT INTO project_reviews (project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, review_type) DO UPDATE SET status = excluded.status, evidence_link = excluded.evidence_link, completed_by = excluded.completed_by, completed_at = excluded.completed_at, exception_reason = excluded.exception_reason`)
-      .run(review.projectId, review.reviewType, review.status, review.evidenceLink, review.completedBy, review.completedAt, review.exceptionReason);
+    this.db.prepare(`INSERT INTO project_reviews (
+        project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, review_type) DO UPDATE SET status = excluded.status, evidence_link = excluded.evidence_link,
+        completed_by = excluded.completed_by, completed_at = excluded.completed_at, exception_reason = excluded.exception_reason,
+        artifact_verification_status = excluded.artifact_verification_status,
+        artifact_verified_at = excluded.artifact_verified_at,
+        artifact_verification_method = excluded.artifact_verification_method`)
+      .run(review.projectId, review.reviewType, review.status, review.evidenceLink, review.completedBy, review.completedAt, review.exceptionReason,
+        review.artifactVerificationStatus || null, review.artifactVerifiedAt || null, review.artifactVerificationMethod || null);
   }
 
   listReviews(projectId) {
-    return this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(projectId);
+    return this.db.prepare(`SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy,
+      completed_at AS completedAt, exception_reason AS exceptionReason, artifact_verification_status AS artifactVerificationStatus,
+      artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod
+      FROM project_reviews WHERE project_id = ? ORDER BY review_type`).all(projectId);
   }
 
   serializeDeliveryKitItem(row) {
@@ -833,21 +867,33 @@ export class SqliteLabsStorage {
       acceptedAt: row.accepted_at,
       acceptedBy: row.accepted_by,
       updatedAt: row.updated_at,
-      updatedBy: row.updated_by
+      updatedBy: row.updated_by,
+      artifactVerificationStatus: row.artifact_verification_status || null,
+      artifactVerifiedAt: row.artifact_verified_at || null,
+      artifactVerificationMethod: row.artifact_verification_method || null
     };
   }
 
   listDeliveryKitItems(projectId) {
-    const rows = this.db.prepare(`SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by
+    const rows = this.db.prepare(`SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by,
+      artifact_verification_status, artifact_verified_at, artifact_verification_method
       FROM delivery_kit_items WHERE project_id = ? ORDER BY item_key`).all(projectId).map(row => this.serializeDeliveryKitItem(row));
     return defaultDeliveryKitItems(projectId, rows);
   }
 
   upsertDeliveryKitItem(item) {
-    this.db.prepare(`INSERT INTO delivery_kit_items (project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, item_key) DO UPDATE SET status = excluded.status, owner_id = excluded.owner_id,
-      evidence_link = excluded.evidence_link, accepted_at = excluded.accepted_at, accepted_by = excluded.accepted_by, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
-      .run(item.projectId, item.itemKey, item.status, item.ownerId, item.evidenceLink, item.acceptedAt, item.acceptedBy, item.updatedAt, item.updatedBy);
+    this.db.prepare(`INSERT INTO delivery_kit_items (
+        project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by,
+        artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, item_key) DO UPDATE SET status = excluded.status, owner_id = excluded.owner_id,
+      evidence_link = excluded.evidence_link, accepted_at = excluded.accepted_at, accepted_by = excluded.accepted_by,
+      updated_at = excluded.updated_at, updated_by = excluded.updated_by,
+      artifact_verification_status = excluded.artifact_verification_status,
+      artifact_verified_at = excluded.artifact_verified_at,
+      artifact_verification_method = excluded.artifact_verification_method`)
+      .run(item.projectId, item.itemKey, item.status, item.ownerId, item.evidenceLink, item.acceptedAt, item.acceptedBy, item.updatedAt, item.updatedBy,
+        item.artifactVerificationStatus || null, item.artifactVerifiedAt || null, item.artifactVerificationMethod || null);
   }
 
   deleteDeliveryKitItem(projectId, itemKey) {
@@ -906,14 +952,28 @@ export class SqliteLabsStorage {
   }
 
   getHandoff(projectId) {
-    const handoff = this.db.prepare("SELECT project_id AS projectId, receiving_owner_id AS receivingOwnerId, status, adoption_plan_link AS adoptionPlanLink, support_end_date AS supportEndDate, follow_up_date AS followUpDate, onboarding_acknowledged AS onboardingAcknowledged, accepted_by AS acceptedBy, accepted_at AS acceptedAt FROM handoffs WHERE project_id = ?").get(projectId);
+    const handoff = this.db.prepare(`SELECT project_id AS projectId, receiving_owner_id AS receivingOwnerId, status,
+      adoption_plan_link AS adoptionPlanLink, support_end_date AS supportEndDate, follow_up_date AS followUpDate,
+      onboarding_acknowledged AS onboardingAcknowledged, accepted_by AS acceptedBy, accepted_at AS acceptedAt,
+      artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt,
+      artifact_verification_method AS artifactVerificationMethod
+      FROM handoffs WHERE project_id = ?`).get(projectId);
     return handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null;
   }
 
   upsertHandoff(handoff) {
-    this.db.prepare(`INSERT INTO handoffs (project_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date, onboarding_acknowledged, accepted_by, accepted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET status = excluded.status, adoption_plan_link = excluded.adoption_plan_link, support_end_date = excluded.support_end_date, follow_up_date = excluded.follow_up_date, onboarding_acknowledged = excluded.onboarding_acknowledged, accepted_by = excluded.accepted_by, accepted_at = excluded.accepted_at`)
-      .run(handoff.projectId, handoff.receivingOwnerId, handoff.status, handoff.adoptionPlanLink, handoff.supportEndDate, handoff.followUpDate, handoff.onboardingAcknowledged ? 1 : 0, handoff.acceptedBy, handoff.acceptedAt);
+    this.db.prepare(`INSERT INTO handoffs (
+        project_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date,
+        onboarding_acknowledged, accepted_by, accepted_at, artifact_verification_status, artifact_verified_at, artifact_verification_method
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET status = excluded.status, adoption_plan_link = excluded.adoption_plan_link,
+        support_end_date = excluded.support_end_date, follow_up_date = excluded.follow_up_date,
+        onboarding_acknowledged = excluded.onboarding_acknowledged, accepted_by = excluded.accepted_by,
+        accepted_at = excluded.accepted_at, artifact_verification_status = excluded.artifact_verification_status,
+        artifact_verified_at = excluded.artifact_verified_at, artifact_verification_method = excluded.artifact_verification_method`)
+      .run(handoff.projectId, handoff.receivingOwnerId, handoff.status, handoff.adoptionPlanLink, handoff.supportEndDate,
+        handoff.followUpDate, handoff.onboardingAcknowledged ? 1 : 0, handoff.acceptedBy, handoff.acceptedAt,
+        handoff.artifactVerificationStatus || null, handoff.artifactVerifiedAt || null, handoff.artifactVerificationMethod || null);
   }
 
   findOpenDecision(projectId) { return this.db.prepare("SELECT id FROM decisions WHERE project_id = ? AND status IN ('requested', 'approved')").get(projectId) || null; }

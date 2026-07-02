@@ -3,6 +3,7 @@ import { assertStoragePort } from "./storage-port.mjs";
 import { retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPersonSync } from "./directory-adapter.mjs";
+import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifier.mjs";
 import { enrichProjectDirectoryContextSync } from "./directory-context.mjs";
 import { normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
@@ -149,10 +150,11 @@ function draftCollaboratorIds(draft) {
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
-  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter() } = {}) {
+  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier } = {}) {
     this.storage = assertStoragePort(storage);
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
+    this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
   }
 
   actor(id) { return this.storage.getActor(id); }
@@ -594,20 +596,22 @@ export class WorkflowService {
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_GATE_STATUS", "Gate status is invalid.", 422);
     if (input.status === "complete" && !String(input.evidenceLink ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE", "Completed gates require an approved evidence link.", 422);
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "Excepted gates require a written risk acceptance.", 422);
-    if (input.status === "complete") this.validateEvidenceLink(input.evidenceLink);
+    const verification = input.status === "complete" ? this.verifyArtifactLink(input.evidenceLink, { entityType: "project_gate", projectId, key }) : null;
     const before = project.gates.find(gate => gate.key === key) || null; const timestamp = now();
     this.storage.transaction(() => {
-      this.storage.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null });
-      this.storage.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status });
+      this.storage.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null, ...artifactVerificationFields(verification) });
+      this.storage.appendAudit(actor.id, "gate_updated", "project_gate", `${projectId}:${key}`, before, { key, status: input.status, artifactVerificationStatus: verification?.status || null });
       if (key === "delivery_kit" && input.status === "excepted") this.storage.appendAudit(actor.id, "delivery_kit_exception_accepted", "project_gate", `${projectId}:${key}`, before, { exceptionReason: input.exceptionReason.trim() });
     });
     return this.project(projectId);
   }
 
   validateEvidenceLink(value) {
-    let url;
-    try { url = new URL(value); } catch { throw new WorkflowError("INVALID_EVIDENCE_LINK", "Evidence must be a valid approved URL.", 422); }
-    if (!this.approvedArtifactOrigins.has(url.origin)) throw new WorkflowError("UNAPPROVED_EVIDENCE_LINK", "Evidence must link to an approved internal system.", 422);
+    this.artifactVerifier.validateAllowedUrl(value);
+  }
+
+  verifyArtifactLink(value, context = {}) {
+    return this.artifactVerifier.verifyLinkSync(value, context);
   }
 
   addEvidence(actor, projectId, input) {
@@ -619,14 +623,14 @@ export class WorkflowService {
     if (!String(input.result ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE_RESULT", "Evidence requires a result summary.", 422);
     if (!Number.isInteger(Number(input.sampleSize)) || Number(input.sampleSize) < 1) throw new WorkflowError("INVALID_SAMPLE_SIZE", "Evidence requires a sample size of at least one.", 422);
     if (!["low", "medium", "high"].includes(input.confidence)) throw new WorkflowError("INVALID_CONFIDENCE", "Evidence confidence is invalid.", 422);
-    this.validateEvidenceLink(input.sourceLink);
+    const verification = this.verifyArtifactLink(input.sourceLink, { entityType: "evidence", projectId, evidenceType: input.evidenceType });
     const observed = new Date(`${input.observedAt}T12:00:00`);
     if (!input.observedAt || Number.isNaN(observed.getTime()) || observed > new Date()) throw new WorkflowError("INVALID_OBSERVED_DATE", "Evidence date must be today or earlier.", 422);
     const id = randomUUID(); const timestamp = now();
     this.storage.transaction(() => {
-      this.storage.insertEvidence({ id, projectId, evidenceType: input.evidenceType, result: input.result.trim(), sampleSize: Number(input.sampleSize), confidence: input.confidence, sourceLink: input.sourceLink.trim(), observedAt: input.observedAt, createdBy: actor.id, createdAt: timestamp });
-      if (input.evidenceType === "metric_result") this.storage.upsertGate({ projectId, key: "metric_evidence", status: "complete", evidenceLink: input.sourceLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null });
-      this.storage.appendAudit(actor.id, "evidence_recorded", "evidence", id, null, { projectId, evidenceType: input.evidenceType, confidence: input.confidence });
+      this.storage.insertEvidence({ id, projectId, evidenceType: input.evidenceType, result: input.result.trim(), sampleSize: Number(input.sampleSize), confidence: input.confidence, sourceLink: input.sourceLink.trim(), observedAt: input.observedAt, createdBy: actor.id, createdAt: timestamp, ...artifactVerificationFields(verification) });
+      if (input.evidenceType === "metric_result") this.storage.upsertGate({ projectId, key: "metric_evidence", status: "complete", evidenceLink: input.sourceLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
+      this.storage.appendAudit(actor.id, "evidence_recorded", "evidence", id, null, { projectId, evidenceType: input.evidenceType, confidence: input.confidence, artifactVerificationStatus: verification.status });
     });
     return this.project(projectId);
   }
@@ -637,14 +641,14 @@ export class WorkflowService {
     if (![stages.INCUBATING, stages.DECISION_PENDING].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Reviews can be recorded only during incubation or decision review.", 409);
     if (!reviewTypes.includes(reviewType) || !project.reviewRequirements.includes(reviewType)) throw new WorkflowError("INVALID_REVIEW_TYPE", "This review is not required for the project risk classification.", 422);
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_REVIEW_STATUS", "Review status is invalid.", 422);
-    if (input.status === "complete") this.validateEvidenceLink(input.evidenceLink);
+    const verification = input.status === "complete" ? this.verifyArtifactLink(input.evidenceLink, { entityType: "project_review", projectId, reviewType }) : null;
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "An excepted review requires written risk acceptance.", 422);
     const before = project.reviews.find(review => review.reviewType === reviewType) || null; const timestamp = now();
     this.storage.transaction(() => {
-      this.storage.upsertReview({ projectId, reviewType, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null });
+      this.storage.upsertReview({ projectId, reviewType, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null, ...artifactVerificationFields(verification) });
       const complete = project.reviewRequirements.every(type => this.storage.listReviews(projectId).some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
-      this.storage.upsertGate({ projectId, key: "reviews_complete", status: complete ? "complete" : "incomplete", evidenceLink: complete ? input.evidenceLink?.trim() || null : null, completedBy: complete ? actor.id : null, completedAt: complete ? timestamp : null, exceptionReason: null });
-      this.storage.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete });
+      this.storage.upsertGate({ projectId, key: "reviews_complete", status: complete ? "complete" : "incomplete", evidenceLink: complete ? input.evidenceLink?.trim() || null : null, completedBy: complete ? actor.id : null, completedAt: complete ? timestamp : null, exceptionReason: null, ...artifactVerificationFields(complete ? verification : null) });
+      this.storage.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete, artifactVerificationStatus: verification?.status || null });
     });
     return this.project(projectId);
   }
@@ -668,7 +672,7 @@ export class WorkflowService {
     const key = normalizeDeliveryKitItemKey(itemKey);
     const item = normalizeDeliveryKitInput(input);
     this.actor(item.ownerId);
-    if (item.evidenceLink) this.validateEvidenceLink(item.evidenceLink);
+    const verification = item.evidenceLink ? this.verifyArtifactLink(item.evidenceLink, { entityType: "delivery_kit_item", projectId, itemKey: key }) : null;
     const before = this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key) || null;
     const timestamp = now();
     const next = {
@@ -680,11 +684,12 @@ export class WorkflowService {
       acceptedAt: item.status === "complete" ? timestamp : null,
       acceptedBy: item.status === "complete" ? actor.id : null,
       updatedAt: timestamp,
-      updatedBy: actor.id
+      updatedBy: actor.id,
+      ...artifactVerificationFields(verification)
     };
     this.storage.transaction(() => {
       this.storage.upsertDeliveryKitItem(next);
-      this.storage.appendAudit(actor.id, "delivery_kit_item_updated", "delivery_kit_item", `${projectId}:${key}`, before, { itemKey: key, status: next.status, ownerId: next.ownerId });
+      this.storage.appendAudit(actor.id, "delivery_kit_item_updated", "delivery_kit_item", `${projectId}:${key}`, before, { itemKey: key, status: next.status, ownerId: next.ownerId, artifactVerificationStatus: verification?.status || null });
     });
     return this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key);
   }
@@ -766,13 +771,14 @@ export class WorkflowService {
     if (!project.receivingOwner || project.receivingOwner.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the named receiving owner can accept this handoff.", 403);
     if (!project.pendingDecision || project.pendingDecision.outcome !== outcomes.TRANSFER) throw new WorkflowError("INVALID_HANDOFF_STATE", "A transfer decision request is required before handoff acceptance.", 409);
     if (!input.onboardingAcknowledged) throw new WorkflowError("ONBOARDING_REQUIRED", "Receiving owner must acknowledge onboarding before accepting handoff.", 422);
-    this.validateEvidenceLink(input.adoptionPlanLink); this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
+    const verification = this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId });
+    this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
     const timestamp = now(); const existing = this.storage.getHandoff(projectId);
     if (existing?.status === "accepted") throw new WorkflowError("HANDOFF_ALREADY_ACCEPTED", "This handoff has already been accepted.", 409);
     this.storage.transaction(() => {
-      this.storage.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp });
-      for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) this.storage.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null });
-      this.storage.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate });
+      this.storage.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp, ...artifactVerificationFields(verification) });
+      for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) this.storage.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
+      this.storage.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, artifactVerificationStatus: verification.status });
     });
     return this.project(projectId);
   }

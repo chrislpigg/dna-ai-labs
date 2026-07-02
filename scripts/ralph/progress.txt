@@ -310,4 +310,13 @@ Started: 2026-06-20
 - Files changed: `src/workflow-policy.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `src/postgres-read-adapter.mjs`, `src/labs-store.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: transfer readiness should be computed from required structured items; gate exceptions should be explicit audited risk acceptance, not a substitute for silently marking items complete.
 
+## 2026-07-02 — US-036 Add approved artifact verification adapter
+
+- Added an artifact verifier boundary that preserves HTTPS approved-origin checks and optionally validates provider records with fail-closed failure and timeout errors.
+- Persisted verification status, verified timestamp, and method on evidence-backed gates, evidence entries, reviews, delivery-kit items, and handoffs across SQLite demo storage and PostgreSQL production adapters.
+- Wired evidence-backed workflow mutations so failed artifact verification occurs before any gate-completing mutation or audit event is committed.
+- Verification: `npm test` (100 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/018_artifact_verification_metadata.sql`, `src/artifact-verifier.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `package.json`, `test/artifact-verifier.test.mjs`, `test/migration-runner.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: link allow-listing is necessary but not sufficient; workflow gates should only complete after the artifact adapter returns an explicit verified result.
+
 ---

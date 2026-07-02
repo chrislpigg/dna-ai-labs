@@ -20,10 +20,21 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("artifact verification migration stores approved-link verification metadata", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "018_artifact_verification_metadata");
+  assert.ok(migration);
+  for (const table of ["project_gates", "evidence_entries", "project_reviews", "delivery_kit_items", "handoffs"]) {
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table}[\\s\\S]*artifact_verification_status TEXT`));
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS artifact_verified_at TIMESTAMPTZ`));
+    assert.match(migration.sql, new RegExp(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS artifact_verification_method TEXT`));
+  }
+  assert.match(migration.sql, /artifact_verification_status IS NULL OR artifact_verification_status IN \('verified'\)/);
 });
 
 test("role assignment migration stores audited application role metadata", () => {

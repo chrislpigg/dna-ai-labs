@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { LabsStore } from "../src/labs-store.mjs";
 import { WorkflowError, outcomes, stages } from "../src/workflow-policy.mjs";
 import { DirectoryAdapter } from "../src/directory-adapter.mjs";
+import { ArtifactVerifier } from "../src/artifact-verifier.mjs";
 
 function createStore(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dna-ai-labs-"));
@@ -526,6 +527,45 @@ test("gate evidence is restricted to approved internal origins", () => {
     expectWorkflowError(() => store.setGate(store.actor("lab-lead"), "accessibility-agent", "delivery_kit", { status: "complete", evidenceLink: "https://unapproved.example/evidence" }), "UNAPPROVED_EVIDENCE_LINK");
     const project = store.setGate(store.actor("lab-lead"), "accessibility-agent", "delivery_kit", { status: "complete", evidenceLink: "https://intranet.example/evidence" });
     assert.equal(project.gates.find(gate => gate.key === "delivery_kit").status, "complete");
+  } finally { dispose(); }
+});
+
+test("failed artifact verification never completes evidence-backed gates", () => {
+  let providerResult = { status: "failed", reasonCode: "not_found" };
+  const artifactVerifier = new ArtifactVerifier({
+    approvedOrigins: ["https://intranet.example"],
+    verifyRecordSync: () => providerResult
+  });
+  const { store, dispose } = createStore({ artifactVerifier });
+  try {
+    const labLead = store.actor("lab-lead");
+    const lead = store.actor("accessibility-lead");
+    store.acknowledgeAdoption(store.actor("receiving-owner"), "accessibility-agent");
+    store.selectProject(labLead, "accessibility-agent");
+    store.startIncubation(labLead, "accessibility-agent");
+
+    expectWorkflowError(() => store.addEvidence(lead, "accessibility-agent", {
+      evidenceType: "metric_result",
+      result: "Metric improved",
+      sampleSize: 5,
+      confidence: "medium",
+      sourceLink: "https://intranet.example/metric",
+      observedAt: "2026-06-19"
+    }), "ARTIFACT_VERIFICATION_FAILED");
+    assert.notEqual(store.project("accessibility-agent").gates.find(gate => gate.key === "metric_evidence")?.status, "complete");
+
+    providerResult = { status: "verified", verifiedAt: "2026-07-02T00:00:00.000Z", method: "record_validation" };
+    const project = store.addEvidence(lead, "accessibility-agent", {
+      evidenceType: "metric_result",
+      result: "Metric improved",
+      sampleSize: 5,
+      confidence: "medium",
+      sourceLink: "https://intranet.example/metric",
+      observedAt: "2026-06-19"
+    });
+    assert.equal(project.evidence[0].artifactVerificationStatus, "verified");
+    assert.equal(project.evidence[0].artifactVerificationMethod, "record_validation");
+    assert.equal(project.gates.find(gate => gate.key === "metric_evidence").artifactVerificationStatus, "verified");
   } finally { dispose(); }
 });
 
