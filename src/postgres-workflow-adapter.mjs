@@ -30,7 +30,7 @@ function normalizeDraftContent(input = {}) {
   const allowedKeys = [
     "title", "originTeam", "users", "potentialReach", "problem", "metric", "baseline", "target", "metricSource",
     "metricOwnerId", "sponsorId", "receivingOwnerId", "projectLeadId", "riskClassification", "transferDate",
-    "sharedPlatformImpact", "adoptionGate", "evidenceGate", "cycleId"
+    "sharedPlatformImpact", "adoptionGate", "evidenceGate", "cycleId", "capacityUnits"
   ];
   return Object.fromEntries(allowedKeys.filter(key => Object.hasOwn(input, key)).map(key => {
     const value = input[key];
@@ -59,6 +59,7 @@ function intakeRevisionContent(input = {}) {
     riskClassification: String(content.riskClassification ?? "").trim(),
     transferDate: content.transferDate || null,
     sharedPlatformImpact: Boolean(content.sharedPlatformImpact),
+    capacityUnits: Number(content.capacityUnits || 1),
     adoptionGate: Boolean(content.adoptionGate),
     evidenceGate: Boolean(content.evidenceGate)
   };
@@ -76,6 +77,7 @@ const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, r
 const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEIVING_OWNER];
 const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN];
 const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
+const cycleCapacityStages = new Set([stages.SELECTED, stages.INCUBATING, stages.DECISION_PENDING]);
 
 function normalizeTriageComment(input = {}, kind = "comment") {
   if (!triageCommentKinds.includes(kind)) throw new WorkflowError("INVALID_TRIAGE_COMMENT_KIND", "Triage comment type is invalid.", 422);
@@ -157,12 +159,12 @@ class PostgresTransaction {
     await this.query(`INSERT INTO projects (
       id, organization_id, cycle_id, title, stage, origin_team, target_users, potential_reach, problem, metric, baseline, target,
       metric_source, metric_owner_id, sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date,
-      shared_platform_impact, created_at, created_by, updated_at, updated_by
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`, [
+      shared_platform_impact, capacity_units, created_at, created_by, updated_at, updated_by
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`, [
       project.id, this.organizationId, project.cycleId, project.title, project.stage, project.originTeam, project.users,
       project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource,
       project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification,
-      project.transferDate, project.sharedPlatformImpact, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy
+      project.transferDate, project.sharedPlatformImpact, project.capacityUnits || 1, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy
     ]);
   }
 
@@ -249,14 +251,19 @@ class PostgresTransaction {
   async updateProjectIntakeContent(projectId, input, actorId, timestamp) {
     await this.query(`UPDATE projects SET title = $3, cycle_id = $4, origin_team = $5, target_users = $6, potential_reach = $7,
       problem = $8, metric = $9, baseline = $10, target = $11, metric_source = $12, metric_owner_id = $13, sponsor_id = $14,
-      receiving_owner_id = $15, project_lead_id = $16, risk_classification = $17, transfer_date = $18, shared_platform_impact = $19,
-      triage_status = 'open', information_requested_by = NULL, information_requested_at = NULL, updated_at = $20, updated_by = $21
+      receiving_owner_id = $15, project_lead_id = $16, risk_classification = $17, transfer_date = $18, shared_platform_impact = $19, capacity_units = $20,
+      triage_status = 'open', information_requested_by = NULL, information_requested_at = NULL, updated_at = $21, updated_by = $22
       WHERE organization_id = $1 AND id = $2`, [
       this.organizationId, projectId, input.title, input.cycleId, input.originTeam, input.users, input.potentialReach,
       input.problem, input.metric, input.baseline, input.target, input.metricSource, input.metricOwnerId, input.sponsorId,
       input.receivingOwnerId, input.projectLeadId, input.riskClassification, input.transferDate, input.sharedPlatformImpact,
-      timestamp, actorId
+      input.capacityUnits || 1, timestamp, actorId
     ]);
+  }
+
+  async cycleCapacityUsage(cycleId, stagesForUsage = []) {
+    const result = await this.query("SELECT COALESCE(SUM(capacity_units), 0) AS used FROM projects WHERE organization_id = $1 AND cycle_id = $2 AND deleted_at IS NULL AND stage = ANY($3::text[])", [this.organizationId, cycleId, stagesForUsage]);
+    return Number(result.rows?.[0]?.used || 0);
   }
 
   async updateProjectStage(id, stage, actorId, timestamp) {
@@ -474,6 +481,7 @@ export class PostgresWorkflowAdapter {
     const missing = required.filter(key => !String(input[key] ?? "").trim());
     if (missing.length) throw new WorkflowError("INVALID_INTAKE", "Required intake information is missing.", 422, { missing });
     if (!Number.isInteger(Number(input.potentialReach)) || Number(input.potentialReach) < 1) throw new WorkflowError("INVALID_REACH", "Potential company reach must be at least one team.", 422);
+    if (Object.hasOwn(input, "capacityUnits") && (!Number.isInteger(Number(input.capacityUnits)) || Number(input.capacityUnits) < 1 || Number(input.capacityUnits) > 10)) throw new WorkflowError("INVALID_CAPACITY_UNITS", "Project capacity units must be between 1 and 10.", 422);
     if (input.transferDate && new Date(`${input.transferDate}T12:00:00`) <= new Date()) throw new WorkflowError("INVALID_TRANSFER_DATE", "Transfer target must be in the future.", 422);
     await this.actor(input.sponsorId); await this.actor(input.projectLeadId); await this.actor(input.metricOwnerId);
     await this.actor(input.receivingOwnerId);
@@ -562,7 +570,7 @@ export class PostgresWorkflowAdapter {
     const content = intakeRevisionContent(input);
     const id = randomUUID(); const timestamp = now();
     await this.transaction(async tx => {
-      await tx.insertProject({ id, cycleId: content.cycleId, title: content.title, stage: stages.SUBMITTED, originTeam: content.originTeam, users: content.users, potentialReach: content.potentialReach, problem: content.problem, metric: content.metric, baseline: content.baseline, target: content.target, metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId, receivingOwnerId: content.receivingOwnerId || null, projectLeadId: content.projectLeadId, riskClassification: content.riskClassification, transferDate: content.transferDate, sharedPlatformImpact: content.sharedPlatformImpact, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id });
+      await tx.insertProject({ id, cycleId: content.cycleId, title: content.title, stage: stages.SUBMITTED, originTeam: content.originTeam, users: content.users, potentialReach: content.potentialReach, problem: content.problem, metric: content.metric, baseline: content.baseline, target: content.target, metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId, receivingOwnerId: content.receivingOwnerId || null, projectLeadId: content.projectLeadId, riskClassification: content.riskClassification, transferDate: content.transferDate, sharedPlatformImpact: content.sharedPlatformImpact, capacityUnits: content.capacityUnits, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id });
       await tx.insertIntakeRevision({ id: randomUUID(), projectId: id, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
       await tx.appendAudit(actor.id, "intake_submitted", "project", id, null, { stage: stages.SUBMITTED, title: content.title, revisionNumber: 1 });
     });
@@ -579,7 +587,7 @@ export class PostgresWorkflowAdapter {
     const content = intakeRevisionContent(input);
     const projectId = randomUUID(); const timestamp = now();
     await this.transaction(async tx => {
-      await tx.insertProject({ id: projectId, cycleId: content.cycleId, title: content.title, stage: stages.SUBMITTED, originTeam: content.originTeam, users: content.users, potentialReach: content.potentialReach, problem: content.problem, metric: content.metric, baseline: content.baseline, target: content.target, metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId, receivingOwnerId: content.receivingOwnerId, projectLeadId: content.projectLeadId, riskClassification: content.riskClassification, transferDate: content.transferDate, sharedPlatformImpact: content.sharedPlatformImpact, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id });
+      await tx.insertProject({ id: projectId, cycleId: content.cycleId, title: content.title, stage: stages.SUBMITTED, originTeam: content.originTeam, users: content.users, potentialReach: content.potentialReach, problem: content.problem, metric: content.metric, baseline: content.baseline, target: content.target, metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId, receivingOwnerId: content.receivingOwnerId, projectLeadId: content.projectLeadId, riskClassification: content.riskClassification, transferDate: content.transferDate, sharedPlatformImpact: content.sharedPlatformImpact, capacityUnits: content.capacityUnits, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id });
       await tx.insertIntakeRevision({ id: randomUUID(), projectId, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
       await tx.updateIntakeDraftStatus(id, stages.SUBMITTED, timestamp, actor.id);
       await tx.appendAudit(actor.id, "intake_submitted", "project", projectId, null, { stage: stages.SUBMITTED, title: content.title, draftId: id, revisionNumber: 1 });
@@ -701,6 +709,10 @@ export class PostgresWorkflowAdapter {
     if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Only submitted or triaged projects can be selected.", 409);
     if (!project.receivingOwner) throw new WorkflowError("MISSING_RECEIVING_OWNER", "Selection requires a named receiving owner.", 409);
     if (!project.adoptionAcknowledged) throw new WorkflowError("MISSING_ADOPTION_ACK", "Selection requires acknowledgement from the named receiving owner.", 409);
+    const cycle = await this.reads.getCycle(project.cycleId);
+    const usedCapacity = await this.transaction(tx => tx.cycleCapacityUsage(project.cycleId, [...cycleCapacityStages]));
+    const remainingCapacity = Math.max(0, cycle.capacityUnits - usedCapacity);
+    if (project.capacityUnits > remainingCapacity) throw new WorkflowError("CYCLE_CAPACITY_EXCEEDED", "Selection would exceed the cycle's approved capacity.", 409, { cycleId: project.cycleId, capacityUnits: project.capacityUnits, usedCapacity, remainingCapacity });
     await this.transaction(async tx => { await tx.updateProjectStage(id, stages.SELECTED, actor.id, now()); await tx.appendAudit(actor.id, "project_selected", "project", id, { stage: project.stage }, { stage: stages.SELECTED }); });
     return this.project(id);
   }

@@ -20,10 +20,18 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("project capacity migration supports cycle selection limits", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "013_project_capacity_units");
+  assert.ok(migration);
+  assert.match(migration.sql, /ALTER TABLE projects ADD COLUMN capacity_units INTEGER NOT NULL DEFAULT 1 CHECK \(capacity_units BETWEEN 1 AND 10\)/);
+  assert.match(migration.sql, /projects_organization_cycle_capacity_idx/);
+  assert.match(migration.sql, /organization_id, cycle_id, stage, deleted_at/);
 });
 
 test("cycle administration migration records capacity and steering metadata", () => {

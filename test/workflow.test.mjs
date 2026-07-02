@@ -226,6 +226,31 @@ test("administrators can create and update governed program cycles", () => {
   } finally { dispose(); }
 });
 
+test("selection cannot exceed the cycle's approved capacity", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    const labLead = store.actor("lab-lead");
+    const cycle = store.createCycle(admin, {
+      name: "Small cycle", theme: "Focused pilot", startsOn: "2026-10-01", endsOn: "2026-12-31", capacityUnits: 1, steeringGroupIds: ["lab-lead"], status: "planned"
+    });
+    const first = store.createIntake(store.actor("submitter-1"), { ...validIntake, cycleId: cycle.id, title: "First selected intake" });
+    const second = store.createIntake(store.actor("submitter-1"), { ...validIntake, cycleId: cycle.id, title: "Second selected intake" });
+    store.acknowledgeAdoption(store.actor("receiving-owner"), first.id);
+    store.acknowledgeAdoption(store.actor("receiving-owner"), second.id);
+    assert.equal(store.selectProject(labLead, first.id).stage, stages.SELECTED);
+
+    assert.throws(
+      () => store.selectProject(labLead, second.id),
+      error => error instanceof WorkflowError
+        && error.code === "CYCLE_CAPACITY_EXCEEDED"
+        && error.details.cycleId === cycle.id
+        && error.details.remainingCapacity === 0
+        && error.details.capacityUnits === 1
+    );
+  } finally { dispose(); }
+});
+
 test("only Lab leadership can select and start an incubation", () => {
   const { store, dispose } = createStore();
   try {

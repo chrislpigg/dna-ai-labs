@@ -70,7 +70,7 @@ export class SqliteLabsStorage {
         id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, title TEXT NOT NULL, stage TEXT NOT NULL, origin_team TEXT NOT NULL,
         target_users TEXT NOT NULL, potential_reach INTEGER NOT NULL, problem TEXT NOT NULL, metric TEXT NOT NULL,
         baseline TEXT NOT NULL, target TEXT NOT NULL, metric_source TEXT NOT NULL, metric_owner_id TEXT NOT NULL,
-        sponsor_id TEXT NOT NULL, receiving_owner_id TEXT, project_lead_id TEXT NOT NULL, risk_classification TEXT NOT NULL,
+        sponsor_id TEXT NOT NULL, receiving_owner_id TEXT, project_lead_id TEXT NOT NULL, risk_classification TEXT NOT NULL, capacity_units INTEGER NOT NULL DEFAULT 1,
         transfer_date TEXT, adoption_acknowledged_by TEXT, adoption_acknowledged_at TEXT, shared_platform_impact INTEGER NOT NULL DEFAULT 0, extension_count INTEGER NOT NULL DEFAULT 0,
         triage_status TEXT NOT NULL DEFAULT 'open', information_requested_by TEXT, information_requested_at TEXT,
         created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
@@ -146,6 +146,7 @@ export class SqliteLabsStorage {
     this.ensureColumn("projects", "adoption_acknowledged_by", "TEXT");
     this.ensureColumn("cycles", "capacity_units", "INTEGER NOT NULL DEFAULT 3");
     this.ensureColumn("cycles", "steering_group_ids_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("projects", "capacity_units", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("projects", "adoption_acknowledged_at", "TEXT");
     this.ensureColumn("projects", "triage_status", "TEXT NOT NULL DEFAULT 'open'");
     this.ensureColumn("projects", "information_requested_by", "TEXT");
@@ -176,8 +177,8 @@ export class SqliteLabsStorage {
     if (existing) return;
     const insertProject = this.db.prepare(`INSERT INTO projects (
       id, cycle_id, title, stage, origin_team, target_users, potential_reach, problem, metric, baseline, target, metric_source, metric_owner_id,
-      sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, created_at, created_by, updated_at, updated_by
-    ) VALUES (?, 'cycle-2026-q3', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin', ?, 'admin')`);
+      sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, capacity_units, created_at, created_by, updated_at, updated_by
+    ) VALUES (?, 'cycle-2026-q3', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'admin', ?, 'admin')`);
     for (const project of seedProjects) {
       const timestamp = now();
       insertProject.run(project.id, project.title, project.stage, project.originTeam, project.users, project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource, project.metricOwner, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification, project.transferDate, project.sharedPlatformImpact ? 1 : 0, timestamp, timestamp);
@@ -293,6 +294,7 @@ export class SqliteLabsStorage {
       sponsor: { id: row.sponsor_id, name: row.sponsor_name }, receivingOwner: row.receiving_owner_id ? { id: row.receiving_owner_id, name: row.receiving_owner_name } : null,
       projectLead: { id: row.project_lead_id, name: row.project_lead_name }, riskClassification: row.risk_classification, transferDate: row.transfer_date,
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
+      cycleId: row.cycle_id, capacityUnits: row.capacity_units || 1,
       triageStatus: row.triage_status || "open", informationRequestedBy: row.information_requested_by, informationRequestedAt: row.information_requested_at,
       sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
       createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by,
@@ -585,9 +587,9 @@ export class SqliteLabsStorage {
   insertProject(project) {
     this.db.prepare(`INSERT INTO projects (
       id, cycle_id, title, stage, origin_team, target_users, potential_reach, problem, metric, baseline, target, metric_source, metric_owner_id,
-      sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, created_at, created_by, updated_at, updated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(project.id, project.cycleId, project.title, project.stage, project.originTeam, project.users, project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource, project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification, project.transferDate, project.sharedPlatformImpact ? 1 : 0, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy);
+      sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, capacity_units, created_at, created_by, updated_at, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(project.id, project.cycleId, project.title, project.stage, project.originTeam, project.users, project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource, project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification, project.transferDate, project.sharedPlatformImpact ? 1 : 0, project.capacityUnits || 1, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy);
   }
 
   insertCycle(cycle) {
@@ -663,10 +665,16 @@ export class SqliteLabsStorage {
   updateProjectIntakeContent(projectId, input, actorId, timestamp) {
     this.db.prepare(`UPDATE projects SET title = ?, cycle_id = ?, origin_team = ?, target_users = ?, potential_reach = ?,
       problem = ?, metric = ?, baseline = ?, target = ?, metric_source = ?, metric_owner_id = ?, sponsor_id = ?,
-      receiving_owner_id = ?, project_lead_id = ?, risk_classification = ?, transfer_date = ?, shared_platform_impact = ?,
+      receiving_owner_id = ?, project_lead_id = ?, risk_classification = ?, transfer_date = ?, shared_platform_impact = ?, capacity_units = ?,
       triage_status = 'open', information_requested_by = NULL, information_requested_at = NULL,
       updated_at = ?, updated_by = ? WHERE id = ?`)
-      .run(input.title, input.cycleId, input.originTeam, input.users, input.potentialReach, input.problem, input.metric, input.baseline, input.target, input.metricSource, input.metricOwnerId, input.sponsorId, input.receivingOwnerId, input.projectLeadId, input.riskClassification, input.transferDate, input.sharedPlatformImpact ? 1 : 0, timestamp, actorId, projectId);
+      .run(input.title, input.cycleId, input.originTeam, input.users, input.potentialReach, input.problem, input.metric, input.baseline, input.target, input.metricSource, input.metricOwnerId, input.sponsorId, input.receivingOwnerId, input.projectLeadId, input.riskClassification, input.transferDate, input.sharedPlatformImpact ? 1 : 0, input.capacityUnits || 1, timestamp, actorId, projectId);
+  }
+
+  cycleCapacityUsage(cycleId, stagesForUsage = []) {
+    const placeholders = stagesForUsage.map(() => "?").join(", ");
+    const stageClause = placeholders ? `AND stage IN (${placeholders})` : "";
+    return Number(this.db.prepare(`SELECT COALESCE(SUM(capacity_units), 0) AS used FROM projects WHERE cycle_id = ? AND deleted_at IS NULL ${stageClause}`).get(cycleId, ...stagesForUsage).used || 0);
   }
 
   updateProjectStage(id, stage, actorId, timestamp) {

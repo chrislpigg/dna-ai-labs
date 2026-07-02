@@ -18,7 +18,7 @@ function projectRow() {
     id: "project-1", title: "Release evidence", stage: "Incubating", origin_team: "Developer Experience", target_users: "Release leads",
     potential_reach: 4, problem: "Evidence is fragmented.", metric: "Review duration", baseline: "3 hours", target: "1 hour",
     metric_source: "Release tracker", metric_owner_id: "user-1", sponsor_id: "user-2", receiving_owner_id: "user-3",
-    project_lead_id: "user-1", risk_classification: "Internal", transfer_date: "2026-12-18", adoption_acknowledged_at: null,
+    cycle_id: "cycle-1", project_lead_id: "user-1", risk_classification: "Internal", capacity_units: 2, transfer_date: "2026-12-18", adoption_acknowledged_at: null,
     triage_status: "information_requested", information_requested_by: "user-2", information_requested_at: "2026-06-20T00:30:00.000Z",
     shared_platform_impact: false, extension_count: 0, created_at: "2026-06-20T00:00:00.000Z", created_by: "user-4", updated_at: "2026-06-20T01:00:00.000Z"
   };
@@ -38,6 +38,8 @@ test("PostgreSQL reads are tenant-scoped and serialize portfolio evidence, revie
   const [project] = await adapter.listProjects();
 
   assert.equal(project.evidence[0].sampleSize, 12);
+  assert.equal(project.cycleId, "cycle-1");
+  assert.equal(project.capacityUnits, 2);
   assert.equal(project.triageStatus, "information_requested");
   assert.equal(project.informationRequestedBy, "user-2");
   assert.equal(project.reviewsComplete, true);

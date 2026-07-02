@@ -159,7 +159,7 @@ export class PostgresReadAdapter {
     const projectResult = await this.query(
       `SELECT p.id, p.title, p.stage, p.origin_team, p.target_users, p.potential_reach, p.problem,
         p.metric, p.baseline, p.target, p.metric_source, p.metric_owner_id, p.sponsor_id,
-        p.receiving_owner_id, p.project_lead_id, p.risk_classification, p.transfer_date,
+        p.cycle_id, p.receiving_owner_id, p.project_lead_id, p.risk_classification, p.capacity_units, p.transfer_date,
         p.adoption_acknowledged_at, p.triage_status, p.information_requested_by, p.information_requested_at,
         p.shared_platform_impact, p.extension_count, p.created_at, p.created_by,
         p.updated_at, p.updated_by, p.deleted_at, p.deleted_by, p.deletion_reason
@@ -226,6 +226,7 @@ export class PostgresReadAdapter {
         sponsor: { id: row.sponsor_id }, receivingOwner: row.receiving_owner_id ? { id: row.receiving_owner_id } : null,
         projectLead: { id: row.project_lead_id }, riskClassification: row.risk_classification, transferDate: dateValue(row.transfer_date),
         adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: dateValue(row.adoption_acknowledged_at),
+        cycleId: row.cycle_id, capacityUnits: row.capacity_units || 1,
         triageStatus: row.triage_status || "open", informationRequestedBy: row.information_requested_by, informationRequestedAt: dateValue(row.information_requested_at),
         sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates: projectGates,
         evidence: evidence.get(row.id) || [], reviews: projectReviews, reviewRequirements,

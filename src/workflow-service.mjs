@@ -22,7 +22,7 @@ function normalizeDraftContent(input = {}) {
   const allowedKeys = [
     "title", "originTeam", "users", "potentialReach", "problem", "metric", "baseline", "target", "metricSource",
     "metricOwnerId", "sponsorId", "receivingOwnerId", "projectLeadId", "riskClassification", "transferDate",
-    "sharedPlatformImpact", "adoptionGate", "evidenceGate", "cycleId"
+    "sharedPlatformImpact", "adoptionGate", "evidenceGate", "cycleId", "capacityUnits"
   ];
   return Object.fromEntries(allowedKeys.filter(key => Object.hasOwn(input, key)).map(key => {
     const value = input[key];
@@ -51,6 +51,7 @@ function intakeRevisionContent(input = {}) {
     riskClassification: String(content.riskClassification ?? "").trim(),
     transferDate: content.transferDate || null,
     sharedPlatformImpact: Boolean(content.sharedPlatformImpact),
+    capacityUnits: Number(content.capacityUnits || 1),
     adoptionGate: Boolean(content.adoptionGate),
     evidenceGate: Boolean(content.evidenceGate)
   };
@@ -68,6 +69,7 @@ const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, r
 const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEIVING_OWNER];
 const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN];
 const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
+const cycleCapacityStages = new Set([stages.SELECTED, stages.INCUBATING, stages.DECISION_PENDING]);
 const cycleStatuses = Object.freeze(["planned", "active", "closed"]);
 
 function dateOnly(value, label) {
@@ -298,6 +300,7 @@ export class WorkflowService {
     const missing = required.filter(key => !String(input[key] ?? "").trim());
     if (missing.length) throw new WorkflowError("INVALID_INTAKE", "Required intake information is missing.", 422, { missing });
     if (!Number.isInteger(Number(input.potentialReach)) || Number(input.potentialReach) < 1) throw new WorkflowError("INVALID_REACH", "Potential company reach must be at least one team.", 422);
+    if (Object.hasOwn(input, "capacityUnits") && (!Number.isInteger(Number(input.capacityUnits)) || Number(input.capacityUnits) < 1 || Number(input.capacityUnits) > 10)) throw new WorkflowError("INVALID_CAPACITY_UNITS", "Project capacity units must be between 1 and 10.", 422);
     if (input.transferDate && new Date(`${input.transferDate}T12:00:00`) <= new Date()) throw new WorkflowError("INVALID_TRANSFER_DATE", "Transfer target must be in the future.", 422);
     this.actor(input.sponsorId); this.actor(input.projectLeadId); this.actor(input.metricOwnerId);
     this.actor(input.receivingOwnerId);
@@ -317,7 +320,8 @@ export class WorkflowService {
         metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId,
         receivingOwnerId: content.receivingOwnerId || null, projectLeadId: content.projectLeadId,
         riskClassification: content.riskClassification, transferDate: content.transferDate,
-        sharedPlatformImpact: content.sharedPlatformImpact, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+        sharedPlatformImpact: content.sharedPlatformImpact, capacityUnits: content.capacityUnits,
+        createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
       });
       this.storage.insertIntakeRevision({ id: randomUUID(), projectId: id, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
       this.storage.appendAudit(actor.id, "intake_submitted", "project", id, null, { stage: stages.SUBMITTED, title: content.title, revisionNumber: 1 });
@@ -343,7 +347,8 @@ export class WorkflowService {
         metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId,
         receivingOwnerId: content.receivingOwnerId, projectLeadId: content.projectLeadId,
         riskClassification: content.riskClassification, transferDate: content.transferDate,
-        sharedPlatformImpact: content.sharedPlatformImpact, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+        sharedPlatformImpact: content.sharedPlatformImpact, capacityUnits: content.capacityUnits,
+        createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
       });
       this.storage.insertIntakeRevision({ id: randomUUID(), projectId, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
       this.storage.updateIntakeDraftStatus(id, stages.SUBMITTED, timestamp, actor.id);
@@ -468,6 +473,12 @@ export class WorkflowService {
     if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Only submitted or triaged projects can be selected.", 409);
     if (!project.receivingOwner) throw new WorkflowError("MISSING_RECEIVING_OWNER", "Selection requires a named receiving owner.", 409);
     if (!project.adoptionAcknowledged) throw new WorkflowError("MISSING_ADOPTION_ACK", "Selection requires acknowledgement from the named receiving owner.", 409);
+    const cycle = this.storage.getCycle(project.cycleId);
+    const usedCapacity = this.storage.cycleCapacityUsage(project.cycleId, [...cycleCapacityStages]);
+    const remainingCapacity = Math.max(0, cycle.capacityUnits - usedCapacity);
+    if (project.capacityUnits > remainingCapacity) {
+      throw new WorkflowError("CYCLE_CAPACITY_EXCEEDED", "Selection would exceed the cycle's approved capacity.", 409, { cycleId: project.cycleId, capacityUnits: project.capacityUnits, usedCapacity, remainingCapacity });
+    }
     this.storage.transaction(() => {
       this.storage.updateProjectStage(id, stages.SELECTED, actor.id, now());
       this.storage.appendAudit(actor.id, "project_selected", "project", id, { stage: project.stage }, { stage: stages.SELECTED });

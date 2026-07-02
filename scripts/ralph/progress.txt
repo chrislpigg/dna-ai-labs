@@ -199,4 +199,13 @@ Started: 2026-06-20
 - Files changed: `index.html`, `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: make administrative UI discoverability follow the server role contract, and keep validation summaries focusable so failed configuration saves are usable from the keyboard.
 
+## 2026-07-02 — US-024 Enforce cycle capacity during selection
+
+- Added project capacity units and persisted cycle association to project reads, submitted intake snapshots, SQLite demo storage, and PostgreSQL read/write paths.
+- Selection now checks the target cycle's approved capacity against already selected/incubating/decision-pending work and returns `CYCLE_CAPACITY_EXCEEDED` with cycle id, requested units, used capacity, and remaining capacity.
+- Added production migration coverage and workflow tests proving capacity is consumed by the first selected project and blocks the next selection when the cycle is full.
+- Verification: `npm test` (72 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/013_project_capacity_units.sql`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: enforce cycle capacity at the server-owned selection transition; UI capacity indicators are useful context, but the transition must be the source of truth.
+
 ---
