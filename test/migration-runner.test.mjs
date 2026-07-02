@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts", "022_notification_outbox", "023_notification_worker_state", "024_project_follow_ups", "025_metric_plans"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts", "022_notification_outbox", "023_notification_worker_state", "024_project_follow_ups", "025_metric_plans", "026_rate_limit_counters"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -77,6 +77,20 @@ test("metric plan migration stores source references and refresh state metadata"
   assert.match(migration.sql, /source_type IN \('analytics_dashboard', 'warehouse_query', 'experiment_report'\)/);
   assert.match(migration.sql, /metric_plans_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
   assert.match(migration.sql, /metric_plans_refresh_idx ON metric_plans \(organization_id, refresh_status, stale_at\)/);
+});
+
+test("rate-limit counter migration stores tenant and actor scoped windows", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "026_rate_limit_counters");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS rate_limit_counters/);
+  assert.match(migration.sql, /organization_id TEXT NOT NULL REFERENCES organizations\(id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /actor_id TEXT NOT NULL/);
+  assert.match(migration.sql, /route_key TEXT NOT NULL/);
+  assert.match(migration.sql, /window_start TIMESTAMPTZ NOT NULL/);
+  assert.match(migration.sql, /count INTEGER NOT NULL DEFAULT 0 CHECK \(count >= 0\)/);
+  assert.match(migration.sql, /PRIMARY KEY \(organization_id, actor_id, route_key, window_start\)/);
+  assert.match(migration.sql, /rate_limit_counters_actor_organization_fk FOREIGN KEY \(actor_id, organization_id\) REFERENCES users\(id, organization_id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /rate_limit_counters_expiry_idx ON rate_limit_counters \(expires_at\)/);
 });
 
 test("integration attempts migration stores non-sensitive health metadata", () => {

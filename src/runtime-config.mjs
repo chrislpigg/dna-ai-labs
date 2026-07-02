@@ -14,7 +14,8 @@ const requiredProductionVariables = Object.freeze([
   ["LABS_DIRECTORY_PROVIDER", "missing_directory_provider"],
   ["LABS_WORK_TRACKING_PROVIDER", "missing_work_tracking_provider"],
   ["LABS_CALENDAR_PROVIDER", "missing_calendar_provider"],
-  ["LABS_ANALYTICS_PROVIDER", "missing_analytics_provider"]
+  ["LABS_ANALYTICS_PROVIDER", "missing_analytics_provider"],
+  ["LABS_RATE_LIMIT_STORE", "missing_rate_limit_store"]
 ]);
 
 function text(value) {
@@ -61,6 +62,7 @@ export function validateRuntimeConfiguration(env = process.env) {
       issues.push("invalid_approved_artifact_origins");
     }
     if (text(env.LABS_GROUP_ROLE_MAPPING) && !groupRoleMapping) issues.push("invalid_group_role_mapping");
+    if (text(env.LABS_RATE_LIMIT_STORE) && text(env.LABS_RATE_LIMIT_STORE) !== "postgres") issues.push("invalid_rate_limit_store");
   }
 
   return Object.freeze({

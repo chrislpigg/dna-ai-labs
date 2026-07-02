@@ -27,7 +27,8 @@ const productionEnvironment = {
   LABS_DIRECTORY_PROVIDER: "approved-provider",
   LABS_WORK_TRACKING_PROVIDER: "approved-provider",
   LABS_CALENDAR_PROVIDER: "approved-provider",
-  LABS_ANALYTICS_PROVIDER: "approved-provider"
+  LABS_ANALYTICS_PROVIDER: "approved-provider",
+  LABS_RATE_LIMIT_STORE: "postgres"
 };
 
 test("production configuration reports missing contracts without exposing values", () => {
@@ -41,6 +42,7 @@ test("production configuration reports missing contracts without exposing values
   assert.ok(result.issues.includes("missing_oidc_audience"));
   assert.ok(result.issues.includes("missing_tenant_id"));
   assert.ok(result.issues.includes("missing_group_role_mapping"));
+  assert.ok(result.issues.includes("missing_rate_limit_store"));
   assert.equal(JSON.stringify(result).includes("secret"), false);
   assert.equal(JSON.stringify(result).includes("identity.example"), false);
 });
@@ -75,6 +77,12 @@ test("production configuration rejects incomplete or overlapping group role mapp
   const overlapping = validateRuntimeConfiguration({ ...productionEnvironment, LABS_GROUP_ROLE_MAPPING: productionEnvironment.LABS_GROUP_ROLE_MAPPING.replace("group-submitter", "group-employee") });
   assert.equal(overlapping.valid, false);
   assert.ok(overlapping.issues.includes("invalid_group_role_mapping"));
+});
+
+test("production configuration requires the approved durable rate-limit store", () => {
+  const result = validateRuntimeConfiguration({ ...productionEnvironment, LABS_RATE_LIMIT_STORE: "memory" });
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.includes("invalid_rate_limit_store"));
 });
 
 test("demo mode is explicit and remains non-ready", () => {

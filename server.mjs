@@ -10,6 +10,7 @@ import { demoGroupRoleMapping, parseGroupRoleMapping, resolveApplicationRole } f
 import { requireRole, roles, WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
 import { requireCsrfProtection, responseSecurityHeaders } from "./src/request-security.mjs";
+import { createWriteRateLimiter } from "./src/rate-limiter.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const isVercel = Boolean(process.env.VERCEL);
@@ -22,6 +23,7 @@ const postgresWorkflow = !demoMode && runtimeConfiguration.valid
   ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins })
   : null;
 const workflow = store || postgresWorkflow;
+const writeRateLimiter = createWriteRateLimiter({ env: process.env, demoMode, databaseUrl: process.env.LABS_DATABASE_URL });
 const databaseReadiness = !demoMode && runtimeConfiguration.valid
   ? createDatabaseReadinessProbe({ databaseUrl: process.env.LABS_DATABASE_URL })
   : null;
@@ -93,6 +95,7 @@ async function api(req, res, url) {
     applicationOrigin: process.env.LABS_APPLICATION_ORIGIN
   });
   const path = url.pathname;
+  await writeRateLimiter.check({ method: req.method, path, actorId: requestActor.id, organizationId: requestActor.identity?.organization || process.env.LABS_TENANT_ID || "demo-tenant" });
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
   if (req.method === "GET" && path === "/api/v1/directory/people") return respond(res, 200, { people: await workflow.searchDirectoryPeople(requestActor, url.searchParams.get("q")) });
   if (req.method === "GET" && path === "/api/v1/cycles") return respond(res, 200, { cycles: await workflow.listCycles(requestActor) });
@@ -217,7 +220,10 @@ export async function handler(req, res) {
     }
     if (url.pathname.startsWith("/api/")) await api(req, res, url); else await staticFile(req, res, url);
   } catch (error) {
-    if (error instanceof WorkflowError) return respond(res, error.status, { error: { code: error.code, message: error.message, details: error.details } });
+    if (error instanceof WorkflowError) {
+      const headers = error.code === "RATE_LIMITED" && error.details?.retryAfterSeconds ? { "retry-after": String(error.details.retryAfterSeconds) } : {};
+      return respond(res, error.status, { error: { code: error.code, message: error.message, details: error.details } }, headers);
+    }
     console.error(error);
     respond(res, 500, { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred." } });
   }
@@ -232,5 +238,5 @@ if (!isVercel) {
   server.listen(port, () => console.log(`DNA AI Labs command center listening on http://localhost:${port} (${demoMode ? "explicit demo mode" : "production runtime fail-closed"})`));
 }
 
-function shutdown() { server?.close(() => { Promise.resolve(workflow?.close()).finally(() => process.exit(0)); }); }
+function shutdown() { server?.close(() => { Promise.resolve(workflow?.close()).finally(() => Promise.resolve(writeRateLimiter?.close?.()).finally(() => process.exit(0))); }); }
 if (!isVercel) { process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); }
