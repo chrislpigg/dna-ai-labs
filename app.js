@@ -413,7 +413,12 @@ document.querySelector("#intake-form").addEventListener("submit", async event =>
   event.preventDefault();
   const payload = intakePayloadFromForm(event.currentTarget);
   try {
-    await api("/api/v1/intakes", { method: "POST", body: JSON.stringify(payload) });
+    if (activeDraftId) {
+      await api(`/api/v1/intake-drafts/${encodeURIComponent(activeDraftId)}`, { method: "PATCH", body: JSON.stringify({ content: payload }) });
+      await api(`/api/v1/intake-drafts/${encodeURIComponent(activeDraftId)}/submit`, { method: "POST" });
+    } else {
+      await api("/api/v1/intakes", { method: "POST", body: JSON.stringify(payload) });
+    }
     activeDraftId = null;
     event.currentTarget.reset();
     setDraftStatus("");

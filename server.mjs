@@ -108,7 +108,10 @@ async function api(req, res, url) {
   if (req.method === "POST" && path === "/api/v1/intake-drafts") return respond(res, 201, { draft: await workflow.createIntakeDraft(requestActor, await body(req)) });
   if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: await workflow.createIntake(requestActor, await body(req)) });
 
-  let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
+  let match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)\/submit$/);
+  if (req.method === "POST" && match) return respond(res, 201, { project: await workflow.submitIntakeDraft(requestActor, match[1]) });
+  match = path.match(/^\/api\/v1\/intakes\/([^/]+)\/withdraw$/);
+  if (req.method === "POST" && match) return respond(res, 200, { intake: await workflow.withdrawIntake(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)\/collaborators$/);
   if (req.method === "POST" && match) return respond(res, 200, { draft: await workflow.addIntakeDraftCollaborator(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)\/collaborators\/([^/]+)$/);

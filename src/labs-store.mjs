@@ -250,7 +250,8 @@ export class SqliteLabsStorage {
       projectLead: { id: row.project_lead_id, name: row.project_lead_name }, riskClassification: row.risk_classification, transferDate: row.transfer_date,
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
       sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
-      createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
+      createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by,
+      deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
     };
   }
 
@@ -554,6 +555,11 @@ export class SqliteLabsStorage {
   updateIntakeDraft(id, draft) {
     this.db.prepare("UPDATE intake_drafts SET content_json = ?, updated_at = ?, updated_by = ? WHERE id = ?")
       .run(json(draft.content), draft.updatedAt, draft.updatedBy, id);
+  }
+
+  updateIntakeDraftStatus(id, status, timestamp, actorId) {
+    this.db.prepare("UPDATE intake_drafts SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      .run(status, timestamp, actorId, id);
   }
 
   insertIntakeDraftCollaborator(draftId, collaborator) {

@@ -31,6 +31,7 @@ function normalizeDraftContent(input = {}) {
 }
 
 const collaboratorPermissions = Object.freeze(["edit"]);
+const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
 
 function normalizeCollaboratorRecords(input = {}) {
   const raw = Object.hasOwn(input, "collaborators")
@@ -118,6 +119,7 @@ export class WorkflowService {
   updateIntakeDraft(actor, id, input = {}) {
     const draft = this.storage.getIntakeDraft(id);
     this.requireDraftAccess(actor, draft);
+    if (draft.status !== stages.DRAFT) throw new WorkflowError("INVALID_STATE", "Only draft intakes can be updated.", 409);
     if (Object.hasOwn(input, "ownerId") && input.ownerId !== draft.ownerId) throw new WorkflowError("FORBIDDEN", "Draft ownership cannot be changed.", 403);
     if (Object.hasOwn(input, "status") && input.status !== draft.status) throw new WorkflowError("FORBIDDEN", "Drafts cannot be submitted through the update endpoint.", 403);
     if (Object.hasOwn(input, "collaboratorIds") || Object.hasOwn(input, "collaborators")) throw new WorkflowError("COLLABORATOR_ENDPOINT_REQUIRED", "Use the collaborator endpoint to change draft collaborators.", 409);
@@ -134,6 +136,7 @@ export class WorkflowService {
   addIntakeDraftCollaborator(actor, id, input = {}) {
     const draft = this.storage.getIntakeDraft(id);
     requireRole(actor, draftAllowedRoles);
+    if (draft.status !== stages.DRAFT) throw new WorkflowError("INVALID_STATE", "Only draft intakes can change collaborators.", 409);
     if (draft.ownerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the draft owner can add collaborators.", 403);
     const collaborator = normalizeSingleCollaborator(input);
     if (collaborator.userId === draft.ownerId) throw new WorkflowError("INVALID_COLLABORATOR", "The draft owner does not need collaborator access.", 422);
@@ -151,6 +154,7 @@ export class WorkflowService {
   removeIntakeDraftCollaborator(actor, id, collaboratorId) {
     const draft = this.storage.getIntakeDraft(id);
     requireRole(actor, draftAllowedRoles);
+    if (draft.status !== stages.DRAFT) throw new WorkflowError("INVALID_STATE", "Only draft intakes can change collaborators.", 409);
     if (draft.ownerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the draft owner can remove collaborators.", 403);
     const userId = String(collaboratorId ?? "").trim();
     const collaborator = (draft.collaborators || []).find(item => item.userId === userId);
@@ -190,18 +194,18 @@ export class WorkflowService {
   }
 
   validateIntake(input) {
-    const required = ["title", "originTeam", "users", "problem", "metric", "baseline", "target", "metricSource", "metricOwnerId", "sponsorId", "projectLeadId", "riskClassification"];
+    const required = ["title", "originTeam", "users", "problem", "metric", "baseline", "target", "metricSource", "metricOwnerId", "sponsorId", "receivingOwnerId", "projectLeadId", "riskClassification"];
     const missing = required.filter(key => !String(input[key] ?? "").trim());
     if (missing.length) throw new WorkflowError("INVALID_INTAKE", "Required intake information is missing.", 422, { missing });
     if (!Number.isInteger(Number(input.potentialReach)) || Number(input.potentialReach) < 1) throw new WorkflowError("INVALID_REACH", "Potential company reach must be at least one team.", 422);
     if (input.transferDate && new Date(`${input.transferDate}T12:00:00`) <= new Date()) throw new WorkflowError("INVALID_TRANSFER_DATE", "Transfer target must be in the future.", 422);
     this.actor(input.sponsorId); this.actor(input.projectLeadId); this.actor(input.metricOwnerId);
-    if (input.receivingOwnerId) this.actor(input.receivingOwnerId);
+    this.actor(input.receivingOwnerId);
     if (!input.adoptionGate || !input.evidenceGate) throw new WorkflowError("GATES_UNCONFIRMED", "Adoption and evidence gates must be confirmed before submission.", 422);
   }
 
   createIntake(actor, input) {
-    requireRole(actor, [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN]);
+    requireRole(actor, intakeOwnerRoles);
     this.validateIntake(input);
     const id = randomUUID(); const timestamp = now();
     this.storage.transaction(() => {
@@ -217,6 +221,45 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "intake_submitted", "project", id, null, { stage: stages.SUBMITTED, title: input.title.trim() });
     });
     return this.project(id);
+  }
+
+  submitIntakeDraft(actor, id) {
+    requireRole(actor, intakeOwnerRoles);
+    const draft = this.storage.getIntakeDraft(id);
+    if (draft.ownerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the draft owner can submit this intake.", 403);
+    if (draft.status !== stages.DRAFT) throw new WorkflowError("INVALID_STATE", "Only draft intakes can be submitted.", 409);
+    const input = draft.content || {};
+    this.validateIntake(input);
+    const projectId = randomUUID();
+    const timestamp = now();
+    this.storage.transaction(() => {
+      this.storage.insertProject({
+        id: projectId, cycleId: input.cycleId || "cycle-2026-q3", title: input.title.trim(), stage: stages.SUBMITTED,
+        originTeam: input.originTeam.trim(), users: input.users.trim(), potentialReach: Number(input.potentialReach),
+        problem: input.problem.trim(), metric: input.metric.trim(), baseline: input.baseline.trim(), target: input.target.trim(),
+        metricSource: input.metricSource.trim(), metricOwnerId: input.metricOwnerId, sponsorId: input.sponsorId,
+        receivingOwnerId: input.receivingOwnerId, projectLeadId: input.projectLeadId,
+        riskClassification: input.riskClassification, transferDate: input.transferDate || null,
+        sharedPlatformImpact: Boolean(input.sharedPlatformImpact), createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+      });
+      this.storage.updateIntakeDraftStatus(id, stages.SUBMITTED, timestamp, actor.id);
+      this.storage.appendAudit(actor.id, "intake_submitted", "project", projectId, null, { stage: stages.SUBMITTED, title: input.title.trim(), draftId: id });
+      this.storage.appendAudit(actor.id, "intake_draft_submitted", "intake_draft", id, { status: stages.DRAFT }, { status: stages.SUBMITTED, projectId });
+    });
+    return this.project(projectId);
+  }
+
+  withdrawIntake(actor, id) {
+    requireRole(actor, intakeOwnerRoles);
+    const project = this.project(id);
+    if (project.createdBy !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the intake owner can withdraw it.", 403);
+    if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Only submitted or triaged intakes can be withdrawn.", 409);
+    const timestamp = now();
+    this.storage.transaction(() => {
+      this.storage.softDeleteProject(id, actor.id, "withdrawn", timestamp);
+      this.storage.appendAudit(actor.id, "intake_withdrawn", "project", id, { stage: project.stage, deletedAt: null }, { deletionReason: "withdrawn", deletedAt: timestamp });
+    });
+    return { id, withdrawnAt: timestamp, deletionReason: "withdrawn" };
   }
 
   selectProject(actor, id) {

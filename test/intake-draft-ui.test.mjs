@@ -15,6 +15,7 @@ test("intake page exposes accessible save and resume draft controls", () => {
 test("draft UI uses server draft endpoints without submitting required intake fields", () => {
   assert.match(app, /api\("\/api\/v1\/intake-drafts"\)/);
   assert.match(app, /api\(`\/api\/v1\/intake-drafts\/\$\{encodeURIComponent\(id\)\}`\)/);
+  assert.match(app, /api\(`\/api\/v1\/intake-drafts\/\$\{encodeURIComponent\(activeDraftId\)\}\/submit`, \{ method: "POST" \}\)/);
   assert.match(app, /api\(path, \{ method: activeDraftId \? "PATCH" : "POST"/);
   assert.match(app, /intakePayloadFromForm\(document\.querySelector\("#intake-form"\), \{ draft: true \}\)/);
 });

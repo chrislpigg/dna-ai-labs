@@ -153,4 +153,13 @@ Started: 2026-06-20
 - Files changed: `migrations/008_intake_draft_collaborators.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: model draft collaboration as first-class permission metadata rather than a mutable ID array; it gives the workflow a durable surface for authorization and audit without opening a new path for intake submission.
 
+## 2026-07-02 — US-019 Support intake submission and withdrawal
+
+- Added explicit draft submission and intake withdrawal workflow methods with server-owned state guards. Draft submission is owner-only, rejects incomplete selection data, creates the submitted project and draft status update in one audited transaction, and prevents further draft edits after submission.
+- Added owner-only withdrawal for submitted or triaged intakes before selection. Withdrawal uses the existing controlled soft-delete metadata with reason `withdrawn`, keeping withdrawn intakes out of normal project reads without introducing a non-spec lifecycle stage.
+- Added API routes for `POST /api/v1/intake-drafts/{id}/submit` and `POST /api/v1/intakes/{id}/withdraw`, and updated the draft UI submit path to use the explicit submit transition when a saved draft is active.
+- Verification: `npm test` (60 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/009_intake_submit_withdraw.sql`, `server.mjs`, `app.js`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/intake-draft-ui.test.mjs`, `test/migration-runner.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: model withdrawal as an owner-governed soft delete with an audited controlled reason; this preserves lifecycle semantics and retention/audit behavior without making withdrawn intake content visible in portfolio queues.
+
 ---

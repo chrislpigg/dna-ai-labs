@@ -20,10 +20,18 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("intake submit migration allows submitted draft status for explicit transitions", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "009_intake_submit_withdraw");
+  assert.ok(migration);
+  assert.match(migration.sql, /DROP CONSTRAINT IF EXISTS intake_drafts_status_check/);
+  assert.match(migration.sql, /CHECK \(status IN \('Draft', 'Submitted'\)\)/);
+  assert.match(migration.sql, /intake_drafts_organization_status_updated_idx/);
 });
 
 test("intake draft collaborator migration records explicit draft permissions", () => {

@@ -129,8 +129,8 @@ export class PostgresReadAdapter {
       `SELECT p.id, p.title, p.stage, p.origin_team, p.target_users, p.potential_reach, p.problem,
         p.metric, p.baseline, p.target, p.metric_source, p.metric_owner_id, p.sponsor_id,
         p.receiving_owner_id, p.project_lead_id, p.risk_classification, p.transfer_date,
-        p.adoption_acknowledged_at, p.shared_platform_impact, p.extension_count, p.created_at, p.updated_at,
-        p.deleted_at, p.deleted_by, p.deletion_reason
+        p.adoption_acknowledged_at, p.shared_platform_impact, p.extension_count, p.created_at, p.created_by,
+        p.updated_at, p.updated_by, p.deleted_at, p.deleted_by, p.deletion_reason
        FROM projects p
        WHERE p.organization_id = $1${includeDeleted ? "" : " AND p.deleted_at IS NULL"}${projectFilter}
        ORDER BY p.updated_at DESC`,
@@ -203,7 +203,8 @@ export class PostgresReadAdapter {
           requiredApprovers: requiredApproverRoles(pending.outcome, { sharedPlatformImpact: Boolean(row.shared_platform_impact) }),
           missingGates: missingGates(pending.outcome, projectGates)
         } : null,
-        handoff: handoffs.get(row.id) || null, createdAt: dateValue(row.created_at), updatedAt: dateValue(row.updated_at),
+        handoff: handoffs.get(row.id) || null, createdAt: dateValue(row.created_at), createdBy: row.created_by,
+        updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by,
         deletedAt: dateValue(row.deleted_at), deletedBy: row.deleted_by, deletionReason: row.deletion_reason
       };
     });

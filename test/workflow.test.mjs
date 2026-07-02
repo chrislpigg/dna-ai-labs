@@ -16,16 +16,33 @@ function expectWorkflowError(fn, code) {
   assert.throws(fn, error => error instanceof WorkflowError && error.code === code);
 }
 
+const validIntake = {
+  title: "Release readiness assistant",
+  originTeam: "Developer Experience",
+  users: "Release leads",
+  potentialReach: 5,
+  problem: "Release leads repeat a manual readiness review.",
+  metric: "Review time",
+  baseline: "3 hours",
+  target: "1 hour",
+  metricSource: "Release tracker",
+  metricOwnerId: "accessibility-lead",
+  sponsorId: "executive-sponsor",
+  receivingOwnerId: "receiving-owner",
+  projectLeadId: "accessibility-lead",
+  riskClassification: "Internal",
+  transferDate: "2026-12-18",
+  adoptionGate: true,
+  evidenceGate: true
+};
+
 test("an intake needs meaningful evidence and adoption inputs", () => {
   const { store, dispose } = createStore();
   try {
     const actor = store.actor("submitter-1");
     expectWorkflowError(() => store.createIntake(actor, { title: " ", potentialReach: 0 }), "INVALID_INTAKE");
-    const project = store.createIntake(actor, {
-      title: "Release readiness assistant", originTeam: "Developer Experience", users: "Release leads", potentialReach: 5,
-      problem: "Release leads repeat a manual readiness review.", metric: "Review time", baseline: "3 hours", target: "1 hour", metricSource: "Release tracker", metricOwnerId: "accessibility-lead",
-      sponsorId: "executive-sponsor", receivingOwnerId: "receiving-owner", projectLeadId: "accessibility-lead", riskClassification: "Internal", transferDate: "2026-12-18", adoptionGate: true, evidenceGate: true
-    });
+    expectWorkflowError(() => store.createIntake(actor, { ...validIntake, receivingOwnerId: "" }), "INVALID_INTAKE");
+    const project = store.createIntake(actor, validIntake);
     assert.equal(project.stage, stages.SUBMITTED);
     assert.equal(store.auditEvents(store.actor("lab-lead")).some(event => event.action === "intake_submitted"), true);
   } finally { dispose(); }
@@ -65,6 +82,49 @@ test("intake drafts can be saved incomplete and are visible only to owners and d
     assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_updated"), true);
     assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_collaborator_added"), true);
     assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_collaborator_removed"), true);
+  } finally { dispose(); }
+});
+
+test("draft submission is owner-only, validates selection data, and audits the transition", () => {
+  const { store, dispose } = createStore();
+  try {
+    const submitter = store.actor("submitter-1");
+    const incomplete = store.createIntakeDraft(submitter, { content: { title: "Incomplete intake" } });
+    expectWorkflowError(() => store.submitIntakeDraft(submitter, incomplete.id), "INVALID_INTAKE");
+    assert.equal(store.intakeDraft(submitter, incomplete.id).status, stages.DRAFT);
+
+    const shared = store.createIntakeDraft(submitter, { content: validIntake });
+    store.addIntakeDraftCollaborator(submitter, shared.id, { userId: "accessibility-lead", permission: "edit" });
+    expectWorkflowError(() => store.submitIntakeDraft(store.actor("accessibility-lead"), shared.id), "FORBIDDEN");
+
+    const project = store.submitIntakeDraft(submitter, shared.id);
+    assert.equal(project.stage, stages.SUBMITTED);
+    assert.equal(project.createdBy, "submitter-1");
+    assert.equal(store.intakeDraft(submitter, shared.id).status, stages.SUBMITTED);
+    expectWorkflowError(() => store.updateIntakeDraft(submitter, shared.id, { content: { title: "Changed after submit" } }), "INVALID_STATE");
+    expectWorkflowError(() => store.submitIntakeDraft(submitter, shared.id), "INVALID_STATE");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_submitted" && event.entityId === shared.id), true);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_submitted" && event.after.draftId === shared.id), true);
+  } finally { dispose(); }
+});
+
+test("submitted or triaged intakes can be withdrawn only by their owner before selection", () => {
+  const { store, dispose } = createStore();
+  try {
+    const submitter = store.actor("submitter-1");
+    const project = store.createIntake(submitter, validIntake);
+    expectWorkflowError(() => store.withdrawIntake(store.actor("lab-lead"), project.id), "FORBIDDEN");
+
+    const withdrawn = store.withdrawIntake(submitter, project.id);
+    assert.equal(withdrawn.deletionReason, "withdrawn");
+    assert.equal(store.listProjects().some(item => item.id === project.id), false);
+    expectWorkflowError(() => store.project(project.id), "NOT_FOUND");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_withdrawn" && event.entityId === project.id), true);
+
+    const selected = store.createIntake(submitter, { ...validIntake, title: "Selected intake" });
+    store.acknowledgeAdoption(store.actor("receiving-owner"), selected.id);
+    store.selectProject(store.actor("lab-lead"), selected.id);
+    expectWorkflowError(() => store.withdrawIntake(submitter, selected.id), "INVALID_STATE");
   } finally { dispose(); }
 });
 
