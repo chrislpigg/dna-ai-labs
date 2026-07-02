@@ -77,3 +77,16 @@ test("project brief renders an editable delivery-kit workspace", () => {
   assert.match(app, /acceptedAt \? new Intl\.DateTimeFormat/);
   assert.match(app, /\/delivery-kit\/\$\{encodeURIComponent\(itemKey\)\}`/);
 });
+
+test("project brief renders Fellow assignment and manager acknowledgement views", () => {
+  assert.match(app, /let fellowAssignments = \[\]/);
+  assert.match(app, /\/api\/v1\/fellow-assignments/);
+  assert.match(app, /function renderFellowAssignments\(project\)/);
+  assert.match(app, /aria-label="Fellow assignments"/);
+  assert.match(app, /No Fellow assignments for this project/);
+  assert.match(app, /Fellow assignments unavailable:/);
+  assert.match(app, /data-fellow-create/);
+  assert.match(app, /data-fellow-ack/);
+  assert.match(app, /managerAcknowledgedAt/);
+  assert.match(app, /Capacity and manager acknowledgements/);
+});

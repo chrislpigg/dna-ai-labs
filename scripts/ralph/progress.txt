@@ -291,4 +291,14 @@ Started: 2026-06-20
 - Files changed: `migrations/017_fellow_assignments.sql`, `server.mjs`, `src/fellow-assignments.mjs`, `src/labs-store.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `package.json`, `test/migration-runner.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: keep Fellow capacity as governed assignment metadata and make manager acknowledgement the only path into active assignment state.
 
+## 2026-07-02 — US-034 Build Fellow assignment UI
+
+- Added a Fellow assignment workspace to the project brief with role, capacity, project, manager id, and manager acknowledgement status for each assignment.
+- Added lab/admin assignment creation controls and manager-only acknowledgement actions. Empty and unavailable assignment states are announced with status text rather than disappearing.
+- Added static UI coverage for assignment rendering, unavailable/empty states, create controls, acknowledgement controls, and API wiring.
+- Verification: `npm test` (93 passing) and `npm run check` passed. In-app browser verification was blocked because the Browser plugin reported no available browser backends (`agent.browsers.list()` returned `[]`). A local demo-mode HTTP/API verification confirmed the workspace code was served, `lab-lead` could create an assignment, `submitter-1` received `403 FORBIDDEN`, and the recorded manager could acknowledge the assignment to `active`.
+- Vercel preview: `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: Fellow assignment UI should reflect the server-owned manager acknowledgement state directly; do not imply capacity is active from assignment creation alone.
+
 ---

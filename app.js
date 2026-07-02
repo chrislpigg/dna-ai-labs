@@ -9,6 +9,8 @@ let intakeDrafts = [];
 let activeDraftId = null;
 let cycles = [];
 let editingCycleId = null;
+let fellowAssignments = [];
+let fellowAssignmentError = "";
 
 const activeStages = new Set(["Selected", "Incubating", "Decision pending"]);
 const candidateStages = new Set(["Draft", "Submitted", "Triage"]);
@@ -76,6 +78,28 @@ function renderDeliveryKit(project) {
       </article>`;
     }).join("")}</div>
     ${editable ? `<datalist id="delivery-owner-options">${ownerOptions.map(id => `<option value="${escapeHtml(id)}"></option>`).join("")}</datalist>` : ""}
+  </section>`;
+}
+function canCreateFellowAssignments() { return ["lab-lead", "admin"].includes(currentUser?.role); }
+function renderFellowAssignments(project) {
+  const assignments = fellowAssignments.filter(assignment => assignment.projectId === project.id);
+  const error = fellowAssignmentError ? `<p class="audit-error" role="status">Fellow assignments unavailable: ${escapeHtml(fellowAssignmentError)}</p>` : "";
+  const empty = !assignments.length && !error ? `<p class="empty-state" role="status">No Fellow assignments for this project.</p>` : "";
+  return `<section class="fellow-workspace" aria-label="Fellow assignments">
+    <div class="delivery-kit-heading"><p class="eyebrow">Fellows</p><p>Capacity and manager acknowledgements</p></div>
+    ${error || empty}
+    ${assignments.length ? `<div class="fellow-list">${assignments.map(assignment => `<article class="fellow-item">
+      <div><h4>${escapeHtml(assignment.fellowId)}</h4><span class="delivery-status status-${escapeHtml(assignment.status)}">${escapeHtml(assignment.status)}</span></div>
+      <dl><div><dt>Project</dt><dd>${escapeHtml(project.title)}</dd></div><div><dt>Role</dt><dd>${escapeHtml(assignment.assignmentRole)}</dd></div><div><dt>Capacity</dt><dd>${escapeHtml(assignment.capacityUnits)} unit${Number(assignment.capacityUnits) === 1 ? "" : "s"}</dd></div><div><dt>Manager</dt><dd>${escapeHtml(assignment.managerId)}</dd></div><div><dt>Acknowledgement</dt><dd>${assignment.managerAcknowledgedAt ? escapeHtml(new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(assignment.managerAcknowledgedAt))) : "Pending"}</dd></div></dl>
+      ${currentUser?.id === assignment.managerId && assignment.status === "proposed" ? `<button class="decision-button" data-fellow-ack="${escapeHtml(assignment.id)}">Acknowledge assignment</button>` : ""}
+    </article>`).join("")}</div>` : ""}
+    ${canCreateFellowAssignments() ? `<div class="fellow-editor">
+      <p>Assign Fellow</p>
+      <label>Fellow id<input id="fellow-id" placeholder="employee-1" /></label>
+      <label>Role<input id="fellow-role" placeholder="Pilot builder" /></label>
+      <label>Capacity units<input id="fellow-capacity" type="number" min="1" max="10" value="1" /></label>
+      <button class="decision-button" data-fellow-create="${escapeHtml(project.id)}">Create assignment</button>
+    </div>` : ""}
   </section>`;
 }
 
@@ -278,6 +302,14 @@ async function saveIntakeDraft() {
 async function refreshPortfolio() {
   const { projects: result } = await api("/api/v1/projects");
   projects = result;
+  try {
+    const { assignments } = await api("/api/v1/fellow-assignments");
+    fellowAssignments = assignments;
+    fellowAssignmentError = "";
+  } catch (error) {
+    fellowAssignments = [];
+    fellowAssignmentError = error.message;
+  }
   renderStats();
   renderProjects();
 }
@@ -461,6 +493,7 @@ function openProject(id) {
   const decisionHistory = project.decisionHistory.length ? project.decisionHistory.map(decision => `<li><b>${escapeHtml(decision.outcome)}</b> · ${escapeHtml(decision.status)} <span>${escapeHtml(decision.rationale)}</span></li>`).join("") : "<li>No decisions requested yet.</li>";
   const directoryWarnings = directoryWarningList(project);
   const deliveryKitWorkspace = renderDeliveryKit(project);
+  const fellowWorkspace = renderFellowAssignments(project);
   document.querySelector("#dialog-content").innerHTML = `
     <p class="eyebrow dialog-stage">${escapeHtml(project.originTeam)} · ${escapeHtml(project.stage)}</p>
     <h2 id="dialog-title" class="dialog-title">${escapeHtml(project.title)}</h2>
@@ -480,6 +513,7 @@ function openProject(id) {
     </dl>
     ${directoryWarnings ? `<section class="directory-warnings" aria-label="Directory assignment warnings"><p class="eyebrow">Directory warnings</p><ul>${directoryWarnings}</ul></section>` : ""}
     ${deliveryKitWorkspace}
+    ${fellowWorkspace}
     <section class="evidence-summary"><p class="eyebrow">Pilot evidence</p><ul>${evidenceSummary}</ul></section>
     <section class="review-summary"><p class="eyebrow">Required reviews</p><ul>${reviewSummary.map(review => `<li><b>${escapeHtml(review.reviewType.replaceAll("_", " "))}</b><span class="review-${escapeHtml(review.status)}">${escapeHtml(review.status)}</span></li>`).join("")}</ul></section>
     <section class="decision-history"><p class="eyebrow">Decision history</p><ul>${decisionHistory}</ul></section>
@@ -586,6 +620,30 @@ async function resetDeliveryKitItem(itemKey) {
   } catch (error) { showToast(error.message); }
 }
 
+async function createFellowAssignment(projectId) {
+  const project = getProject(projectId);
+  const payload = {
+    cycleId: project.cycleId,
+    projectId,
+    fellowId: document.querySelector("#fellow-id")?.value.trim(),
+    assignmentRole: document.querySelector("#fellow-role")?.value.trim(),
+    capacityUnits: Number(document.querySelector("#fellow-capacity")?.value || 1)
+  };
+  try {
+    await api("/api/v1/fellow-assignments", { method: "POST", body: JSON.stringify(payload) });
+    await refreshPortfolio(); openProject(activeProjectId);
+    showToast("Fellow assignment created and awaiting manager acknowledgement.");
+  } catch (error) { showToast(error.message); }
+}
+
+async function acknowledgeFellowAssignment(id) {
+  try {
+    await api(`/api/v1/fellow-assignments/${encodeURIComponent(id)}/manager-acknowledgement`, { method: "POST" });
+    await refreshPortfolio(); openProject(activeProjectId);
+    showToast("Fellow assignment acknowledged and activated.");
+  } catch (error) { showToast(error.message); }
+}
+
 async function respondToDecision(result) {
   const comment = document.querySelector("#approval-comment")?.value.trim();
   if (!comment) return showToast("Add an approval comment before responding.");
@@ -666,6 +724,10 @@ document.addEventListener("click", event => {
   if (deliverySave) saveDeliveryKitItem(deliverySave.dataset.deliverySave);
   const deliveryReset = event.target.closest("[data-delivery-reset]");
   if (deliveryReset) resetDeliveryKitItem(deliveryReset.dataset.deliveryReset);
+  const fellowCreate = event.target.closest("[data-fellow-create]");
+  if (fellowCreate) createFellowAssignment(fellowCreate.dataset.fellowCreate);
+  const fellowAck = event.target.closest("[data-fellow-ack]");
+  if (fellowAck) acknowledgeFellowAssignment(fellowAck.dataset.fellowAck);
   const approval = event.target.closest("[data-approval]");
   if (approval) respondToDecision(approval.dataset.approval);
   if (event.target.closest("[data-accept-handoff]")) acceptHandoff();
