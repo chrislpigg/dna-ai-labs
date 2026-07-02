@@ -272,4 +272,14 @@ Started: 2026-06-20
 - Files changed: `migrations/016_delivery_kit_items.sql`, `server.mjs`, `src/delivery-kit.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `package.json`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: keep delivery readiness as structured metadata and approved links; do not turn delivery-kit items into free-form storage for operating docs or production logs.
 
+## 2026-07-02 — US-032 Build delivery-kit workspace
+
+- Added a delivery-kit workspace inside the project brief that renders every required item with status, accountable owner, approved evidence link, and acceptance date.
+- Added accessible per-item edit controls for authorized lab/admin/project-lead users, wired to the delivery-kit API for save and reset actions. Unauthorized users see read-only item state.
+- Added clear transfer-readiness gap copy listing incomplete delivery-kit items, plus static UI coverage for rendering, controls, API usage, and gap text.
+- Verification: `npm test` (90 passing) and `npm run check` passed. In-app browser verification was blocked because the Browser plugin reported no available browser backends (`agent.browsers.list()` returned `[]`). A local demo-mode HTTP/API verification confirmed the workspace code was served, the assigned project lead could save a completed architecture item, `receiving-owner` received `403 FORBIDDEN`, and project payloads showed the completed item plus remaining gaps.
+- Vercel preview: `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: surface transfer readiness as explicit missing structured items, not as a hidden gate count; authorized UI should call the same audited item API used by backend workflows.
+
 ---

@@ -64,3 +64,16 @@ test("project brief renders directory organization context and warnings", () => 
   assert.match(app, /Receiving owner<\/dt><dd>\$\{escapeHtml\(assignmentSummary\(project, "receivingOwner"\)\)\}/);
   assert.match(app, /Directory warnings/);
 });
+
+test("project brief renders an editable delivery-kit workspace", () => {
+  assert.match(app, /function renderDeliveryKit\(project\)/);
+  assert.match(app, /Transfer-readiness gaps:/);
+  assert.match(app, /aria-label="Delivery kit workspace"/);
+  assert.match(app, /data-delivery-status/);
+  assert.match(app, /data-delivery-owner/);
+  assert.match(app, /data-delivery-evidence/);
+  assert.match(app, /data-delivery-save/);
+  assert.match(app, /data-delivery-reset/);
+  assert.match(app, /acceptedAt \? new Intl\.DateTimeFormat/);
+  assert.match(app, /\/delivery-kit\/\$\{encodeURIComponent\(itemKey\)\}`/);
+});

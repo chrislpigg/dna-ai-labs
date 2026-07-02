@@ -41,6 +41,43 @@ function hasActiveDirectoryAssignment(project, key) {
 function directoryWarningList(project) {
   return (project.directoryWarnings || []).map(warning => `<li><b>${escapeHtml(warning.code)}</b> · ${escapeHtml(warning.assignment)} · ${escapeHtml(warning.userId)}</li>`).join("");
 }
+function deliveryKitLabel(key) { return String(key).replaceAll("_", " "); }
+function canEditDeliveryKit(project) {
+  return ["lab-lead", "admin"].includes(currentUser?.role) || (currentUser?.role === "project-lead" && project.projectLead?.id === currentUser.id);
+}
+function renderDeliveryKit(project) {
+  const items = project.deliveryKit || [];
+  const editable = canEditDeliveryKit(project);
+  const gaps = items.filter(item => item.status !== "complete").map(item => deliveryKitLabel(item.itemKey));
+  const gapCopy = gaps.length ? `Transfer-readiness gaps: ${gaps.join(", ")}.` : "Transfer-readiness kit is complete.";
+  const ownerOptions = [
+    project.projectLead?.id,
+    project.receivingOwner?.id,
+    project.sponsor?.id,
+    project.metricOwnerId
+  ].filter(Boolean);
+  return `<section class="delivery-kit-workspace" aria-label="Delivery kit workspace">
+    <div class="delivery-kit-heading"><p class="eyebrow">Delivery kit</p><p class="${gaps.length ? "is-gap" : "is-complete"}">${escapeHtml(gapCopy)}</p></div>
+    <div class="delivery-kit-grid">${items.map(item => {
+      const label = deliveryKitLabel(item.itemKey);
+      const statusId = `delivery-status-${item.itemKey}`;
+      const ownerId = `delivery-owner-${item.itemKey}`;
+      const evidenceId = `delivery-evidence-${item.itemKey}`;
+      const accepted = item.acceptedAt ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(item.acceptedAt)) : "Not accepted";
+      return `<article class="delivery-kit-item" data-delivery-item="${escapeHtml(item.itemKey)}">
+        <div><h4>${escapeHtml(label)}</h4><span class="delivery-status status-${escapeHtml(item.status)}">${escapeHtml(item.status.replaceAll("_", " "))}</span></div>
+        <dl><div><dt>Owner</dt><dd>${escapeHtml(item.ownerId || "Unassigned")}</dd></div><div><dt>Evidence</dt><dd>${item.evidenceLink ? `<a href="${escapeHtml(item.evidenceLink)}" target="_blank" rel="noreferrer">Approved link</a>` : "Missing"}</dd></div><div><dt>Accepted</dt><dd>${escapeHtml(accepted)}</dd></div></dl>
+        ${editable ? `<div class="delivery-kit-editor">
+          <label for="${statusId}">Status<select id="${statusId}" data-delivery-status><option value="not_started" ${item.status === "not_started" ? "selected" : ""}>Not started</option><option value="in_progress" ${item.status === "in_progress" ? "selected" : ""}>In progress</option><option value="complete" ${item.status === "complete" ? "selected" : ""}>Complete</option></select></label>
+          <label for="${ownerId}">Owner<input id="${ownerId}" data-delivery-owner list="delivery-owner-options" value="${escapeHtml(item.ownerId || project.projectLead?.id || "")}" /></label>
+          <label for="${evidenceId}">Evidence link<input id="${evidenceId}" data-delivery-evidence type="url" value="${escapeHtml(item.evidenceLink || "")}" placeholder="https://intranet.example/delivery-kit" /></label>
+          <div class="delivery-kit-actions"><button class="decision-button" data-delivery-save="${escapeHtml(item.itemKey)}">Save</button><button class="decision-button" data-delivery-reset="${escapeHtml(item.itemKey)}">Reset</button></div>
+        </div>` : ""}
+      </article>`;
+    }).join("")}</div>
+    ${editable ? `<datalist id="delivery-owner-options">${ownerOptions.map(id => `<option value="${escapeHtml(id)}"></option>`).join("")}</datalist>` : ""}
+  </section>`;
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -423,6 +460,7 @@ function openProject(id) {
   const reviewSummary = project.reviewRequirements.map(type => project.reviews.find(review => review.reviewType === type) || { reviewType: type, status: "incomplete" });
   const decisionHistory = project.decisionHistory.length ? project.decisionHistory.map(decision => `<li><b>${escapeHtml(decision.outcome)}</b> · ${escapeHtml(decision.status)} <span>${escapeHtml(decision.rationale)}</span></li>`).join("") : "<li>No decisions requested yet.</li>";
   const directoryWarnings = directoryWarningList(project);
+  const deliveryKitWorkspace = renderDeliveryKit(project);
   document.querySelector("#dialog-content").innerHTML = `
     <p class="eyebrow dialog-stage">${escapeHtml(project.originTeam)} · ${escapeHtml(project.stage)}</p>
     <h2 id="dialog-title" class="dialog-title">${escapeHtml(project.title)}</h2>
@@ -441,6 +479,7 @@ function openProject(id) {
       <div><dt>Transfer target</dt><dd>${formatDate(project.transferDate)}</dd></div>
     </dl>
     ${directoryWarnings ? `<section class="directory-warnings" aria-label="Directory assignment warnings"><p class="eyebrow">Directory warnings</p><ul>${directoryWarnings}</ul></section>` : ""}
+    ${deliveryKitWorkspace}
     <section class="evidence-summary"><p class="eyebrow">Pilot evidence</p><ul>${evidenceSummary}</ul></section>
     <section class="review-summary"><p class="eyebrow">Required reviews</p><ul>${reviewSummary.map(review => `<li><b>${escapeHtml(review.reviewType.replaceAll("_", " "))}</b><span class="review-${escapeHtml(review.status)}">${escapeHtml(review.status)}</span></li>`).join("")}</ul></section>
     <section class="decision-history"><p class="eyebrow">Decision history</p><ul>${decisionHistory}</ul></section>
@@ -525,6 +564,28 @@ async function completeReview(reviewType) {
   } catch (error) { showToast(error.message); }
 }
 
+async function saveDeliveryKitItem(itemKey) {
+  const item = document.querySelector(`[data-delivery-item="${CSS.escape(itemKey)}"]`);
+  const payload = {
+    status: item.querySelector("[data-delivery-status]")?.value,
+    ownerId: item.querySelector("[data-delivery-owner]")?.value.trim(),
+    evidenceLink: item.querySelector("[data-delivery-evidence]")?.value.trim()
+  };
+  try {
+    await api(`/api/v1/projects/${encodeURIComponent(activeProjectId)}/delivery-kit/${encodeURIComponent(itemKey)}`, { method: "PUT", body: JSON.stringify(payload) });
+    await refreshPortfolio(); openProject(activeProjectId);
+    showToast("Delivery-kit item saved and audited.");
+  } catch (error) { showToast(error.message); }
+}
+
+async function resetDeliveryKitItem(itemKey) {
+  try {
+    await api(`/api/v1/projects/${encodeURIComponent(activeProjectId)}/delivery-kit/${encodeURIComponent(itemKey)}`, { method: "DELETE" });
+    await refreshPortfolio(); openProject(activeProjectId);
+    showToast("Delivery-kit item reset and audited.");
+  } catch (error) { showToast(error.message); }
+}
+
 async function respondToDecision(result) {
   const comment = document.querySelector("#approval-comment")?.value.trim();
   if (!comment) return showToast("Add an approval comment before responding.");
@@ -601,6 +662,10 @@ document.addEventListener("click", event => {
   if (event.target.closest("[data-add-evidence]")) addEvidence();
   const review = event.target.closest("[data-complete-review]");
   if (review) completeReview(review.dataset.completeReview);
+  const deliverySave = event.target.closest("[data-delivery-save]");
+  if (deliverySave) saveDeliveryKitItem(deliverySave.dataset.deliverySave);
+  const deliveryReset = event.target.closest("[data-delivery-reset]");
+  if (deliveryReset) resetDeliveryKitItem(deliveryReset.dataset.deliveryReset);
   const approval = event.target.closest("[data-approval]");
   if (approval) respondToDecision(approval.dataset.approval);
   if (event.target.closest("[data-accept-handoff]")) acceptHandoff();
