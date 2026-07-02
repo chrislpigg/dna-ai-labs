@@ -11,6 +11,7 @@ export const storagePortMethods = Object.freeze([
   "listFeatureFlags", "getFeatureFlag", "upsertFeatureFlag",
   "appendIntegrationAttempt", "listIntegrationAttempts",
   "insertNotificationOutbox", "listNotificationOutbox",
+  "claimNotificationOutbox", "markNotificationSent", "markNotificationFailed", "markNotificationDeadLetter",
   "listRoleAssignments", "getRoleAssignment", "upsertRoleAssignment",
   "insertIntakeDraft", "getIntakeDraft", "listIntakeDrafts", "updateIntakeDraft",
   "updateIntakeDraftStatus",

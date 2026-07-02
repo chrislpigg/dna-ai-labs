@@ -111,6 +111,7 @@ export class SqliteLabsStorage {
         state TEXT NOT NULL DEFAULT 'pending', related_entity_type TEXT NOT NULL, related_entity_id TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, payload_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL, available_at TEXT NOT NULL, last_error_code TEXT,
+        claimed_by TEXT, claimed_at TEXT, claim_expires_at TEXT, idempotency_key TEXT, sent_at TEXT,
         FOREIGN KEY(recipient_id) REFERENCES users(id),
         CHECK(state IN ('pending', 'claimed', 'sent', 'failed', 'dead_letter'))
       );
@@ -234,6 +235,11 @@ export class SqliteLabsStorage {
       this.ensureColumn(table, "artifact_verified_at", "TEXT");
       this.ensureColumn(table, "artifact_verification_method", "TEXT");
     }
+    this.ensureColumn("notification_outbox", "claimed_by", "TEXT");
+    this.ensureColumn("notification_outbox", "claimed_at", "TEXT");
+    this.ensureColumn("notification_outbox", "claim_expires_at", "TEXT");
+    this.ensureColumn("notification_outbox", "idempotency_key", "TEXT");
+    this.ensureColumn("notification_outbox", "sent_at", "TEXT");
   }
 
   ensureColumn(table, column, definition) {
@@ -727,9 +733,52 @@ export class SqliteLabsStorage {
     const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 250) : 100;
     return this.db.prepare(`SELECT id, recipient_id AS recipientId, notification_type AS notificationType, state,
       related_entity_type AS relatedEntityType, related_entity_id AS relatedEntityId, attempt_count AS attemptCount,
-      payload_json AS payloadJson, created_at AS createdAt, available_at AS availableAt, last_error_code AS lastErrorCode
+      payload_json AS payloadJson, created_at AS createdAt, available_at AS availableAt, last_error_code AS lastErrorCode,
+      claimed_by AS claimedBy, claimed_at AS claimedAt, claim_expires_at AS claimExpiresAt, idempotency_key AS idempotencyKey, sent_at AS sentAt
       FROM notification_outbox ORDER BY created_at DESC LIMIT ?`).all(bounded)
       .map(row => ({ ...row, payload: parse(row.payloadJson), payloadJson: undefined }));
+  }
+
+  claimNotificationOutbox({ limit = 25, timestamp = now(), workerId = "notification-worker", claimExpiresAt } = {}) {
+    const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : 25;
+    const expiresAt = claimExpiresAt || new Date(Date.parse(timestamp) + 300_000).toISOString();
+    const rows = this.db.prepare(`SELECT id FROM notification_outbox
+      WHERE ((state IN ('pending', 'failed') AND available_at <= ?) OR (state = 'claimed' AND claim_expires_at <= ?))
+      ORDER BY created_at LIMIT ?`).all(timestamp, timestamp, bounded);
+    const update = this.db.prepare(`UPDATE notification_outbox
+      SET state = 'claimed', claimed_by = ?, claimed_at = ?, claim_expires_at = ?,
+        idempotency_key = COALESCE(idempotency_key, ?)
+      WHERE id = ?`);
+    for (const row of rows) update.run(workerId, timestamp, expiresAt, `notification:${row.id}`, row.id);
+    if (!rows.length) return [];
+    const placeholders = rows.map(() => "?").join(", ");
+    return this.db.prepare(`SELECT id, recipient_id AS recipientId, notification_type AS notificationType, state,
+      related_entity_type AS relatedEntityType, related_entity_id AS relatedEntityId, attempt_count AS attemptCount,
+      payload_json AS payloadJson, created_at AS createdAt, available_at AS availableAt, last_error_code AS lastErrorCode,
+      claimed_by AS claimedBy, claimed_at AS claimedAt, claim_expires_at AS claimExpiresAt, idempotency_key AS idempotencyKey, sent_at AS sentAt
+      FROM notification_outbox WHERE id IN (${placeholders}) ORDER BY created_at`).all(...rows.map(row => row.id))
+      .map(row => ({ ...row, payload: parse(row.payloadJson), payloadJson: undefined }));
+  }
+
+  markNotificationSent(id, attemptCount, timestamp = now()) {
+    this.db.prepare(`UPDATE notification_outbox
+      SET state = 'sent', attempt_count = ?, sent_at = ?, available_at = ?, last_error_code = NULL,
+        claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE id = ?`).run(attemptCount, timestamp, timestamp, id);
+  }
+
+  markNotificationFailed(id, attemptCount, errorCode, availableAt) {
+    this.db.prepare(`UPDATE notification_outbox
+      SET state = 'failed', attempt_count = ?, last_error_code = ?, available_at = ?,
+        claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE id = ?`).run(attemptCount, errorCode, availableAt, id);
+  }
+
+  markNotificationDeadLetter(id, attemptCount, errorCode, timestamp = now()) {
+    this.db.prepare(`UPDATE notification_outbox
+      SET state = 'dead_letter', attempt_count = ?, last_error_code = ?, available_at = ?,
+        claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE id = ?`).run(attemptCount, errorCode, timestamp, id);
   }
 
   serializeRoleAssignment(row) {
@@ -755,7 +804,13 @@ export class SqliteLabsStorage {
 
   transaction(work) {
     this.db.exec("BEGIN");
-    try { const result = work(); this.db.exec("COMMIT"); return result; }
+    try {
+      const result = work(this);
+      if (result && typeof result.then === "function") {
+        return result.then(value => { this.db.exec("COMMIT"); return value; }, error => { this.db.exec("ROLLBACK"); throw error; });
+      }
+      this.db.exec("COMMIT"); return result;
+    }
     catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 

@@ -33,6 +33,10 @@ test("workflow service operates through the storage port and preserves durable a
     assert.equal(storagePortMethods.includes("upsertFeatureFlag"), true);
     assert.equal(storagePortMethods.includes("insertNotificationOutbox"), true);
     assert.equal(storagePortMethods.includes("listNotificationOutbox"), true);
+    assert.equal(storagePortMethods.includes("claimNotificationOutbox"), true);
+    assert.equal(storagePortMethods.includes("markNotificationSent"), true);
+    assert.equal(storagePortMethods.includes("markNotificationFailed"), true);
+    assert.equal(storagePortMethods.includes("markNotificationDeadLetter"), true);
     assert.equal(storagePortMethods.includes("listRoleAssignments"), true);
     assert.equal(storagePortMethods.includes("getRoleAssignment"), true);
     assert.equal(storagePortMethods.includes("upsertRoleAssignment"), true);

@@ -255,9 +255,58 @@ class PostgresTransaction {
     const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 250) : 100;
     const result = await this.query(`SELECT id, recipient_id AS "recipientId", notification_type AS "notificationType", state,
       related_entity_type AS "relatedEntityType", related_entity_id AS "relatedEntityId", attempt_count AS "attemptCount",
-      payload, created_at AS "createdAt", available_at AS "availableAt", last_error_code AS "lastErrorCode"
+      payload, created_at AS "createdAt", available_at AS "availableAt", last_error_code AS "lastErrorCode",
+      claimed_by AS "claimedBy", claimed_at AS "claimedAt", claim_expires_at AS "claimExpiresAt",
+      idempotency_key AS "idempotencyKey", sent_at AS "sentAt"
       FROM notification_outbox WHERE organization_id = $1 ORDER BY created_at DESC LIMIT $2`, [this.organizationId, bounded]);
     return result.rows || [];
+  }
+
+  async claimNotificationOutbox({ limit = 25, timestamp = now(), workerId = "notification-worker", claimExpiresAt } = {}) {
+    const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : 25;
+    const expiresAt = claimExpiresAt || new Date(Date.parse(timestamp) + 300_000).toISOString();
+    const result = await this.query(`WITH due AS (
+        SELECT id FROM notification_outbox
+        WHERE organization_id = $1
+          AND ((state IN ('pending', 'failed') AND available_at <= $2) OR (state = 'claimed' AND claim_expires_at <= $2))
+        ORDER BY created_at
+        FOR UPDATE SKIP LOCKED
+        LIMIT $5
+      )
+      UPDATE notification_outbox
+      SET state = 'claimed', claimed_by = $3, claimed_at = $2, claim_expires_at = $4,
+        idempotency_key = COALESCE(idempotency_key, 'notification:' || notification_outbox.id)
+      FROM due
+      WHERE notification_outbox.organization_id = $1 AND notification_outbox.id = due.id
+      RETURNING notification_outbox.id, recipient_id AS "recipientId", notification_type AS "notificationType", state,
+        related_entity_type AS "relatedEntityType", related_entity_id AS "relatedEntityId", attempt_count AS "attemptCount",
+        payload, created_at AS "createdAt", available_at AS "availableAt", last_error_code AS "lastErrorCode",
+        claimed_by AS "claimedBy", claimed_at AS "claimedAt", claim_expires_at AS "claimExpiresAt",
+        idempotency_key AS "idempotencyKey", sent_at AS "sentAt"`, [
+      this.organizationId, timestamp, workerId, expiresAt, bounded
+    ]);
+    return result.rows || [];
+  }
+
+  async markNotificationSent(id, attemptCount, timestamp = now()) {
+    await this.query(`UPDATE notification_outbox
+      SET state = 'sent', attempt_count = $3, sent_at = $4, available_at = $4, last_error_code = NULL,
+        claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE organization_id = $1 AND id = $2`, [this.organizationId, id, attemptCount, timestamp]);
+  }
+
+  async markNotificationFailed(id, attemptCount, errorCode, availableAt) {
+    await this.query(`UPDATE notification_outbox
+      SET state = 'failed', attempt_count = $3, last_error_code = $4, available_at = $5,
+        claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE organization_id = $1 AND id = $2`, [this.organizationId, id, attemptCount, errorCode, availableAt]);
+  }
+
+  async markNotificationDeadLetter(id, attemptCount, errorCode, timestamp = now()) {
+    await this.query(`UPDATE notification_outbox
+      SET state = 'dead_letter', attempt_count = $3, last_error_code = $4, available_at = $5,
+        claimed_by = NULL, claimed_at = NULL, claim_expires_at = NULL
+      WHERE organization_id = $1 AND id = $2`, [this.organizationId, id, attemptCount, errorCode, timestamp]);
   }
 
   async upsertRoleAssignment(assignment) {

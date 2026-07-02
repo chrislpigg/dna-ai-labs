@@ -42,6 +42,10 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
     await tx.listIntegrationAttempts(10);
     await tx.insertNotificationOutbox({ id: "notification-1", recipientId: "user-2", notificationType: "decision_requested", state: "pending", relatedEntityType: "decision", relatedEntityId: "decision-1", attemptCount: 0, payload: { projectId: "project-1", outcome: "Scale" }, createdAt: "2026-06-20T00:45:00.000Z", availableAt: "2026-06-20T00:45:00.000Z", lastErrorCode: null });
     await tx.listNotificationOutbox(10);
+    await tx.claimNotificationOutbox({ limit: 5, timestamp: "2026-06-20T00:45:00.000Z", workerId: "worker-1", claimExpiresAt: "2026-06-20T00:50:00.000Z" });
+    await tx.markNotificationFailed("notification-1", 1, "SMTP_TIMEOUT", "2026-06-20T00:46:00.000Z");
+    await tx.markNotificationSent("notification-1", 2, "2026-06-20T00:47:00.000Z");
+    await tx.markNotificationDeadLetter("notification-1", 3, "SMTP_TIMEOUT", "2026-06-20T00:48:00.000Z");
     await tx.insertEvidence({ id: "evidence-1", projectId: "project-1", evidenceType: "metric_result", result: "Faster", sampleSize: 12, confidence: "high", sourceLink: "https://docs.example/metric", observedAt: "2026-06-19", createdBy: "user-1", createdAt: "2026-06-20T00:00:00.000Z" });
     await tx.upsertReview({ projectId: "project-1", reviewType: "accessibility", status: "complete", evidenceLink: "https://docs.example/review", completedBy: "user-1", completedAt: "2026-06-20T00:00:00.000Z", exceptionReason: null });
     await tx.upsertDeliveryKitItem({ projectId: "project-1", itemKey: "architecture", status: "complete", ownerId: "user-1", evidenceLink: "https://docs.example/architecture", acceptedAt: "2026-06-20T00:00:00.000Z", acceptedBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
@@ -69,6 +73,11 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   assert.equal(sql.some(statement => statement.includes("target = $11")), true);
   assert.equal(sql.some(statement => statement.includes("SUM(capacity_units)")), true);
   assert.equal(sql.some(statement => statement.includes("triage_status")), true);
+  assert.equal(sql.some(statement => statement.includes("FOR UPDATE SKIP LOCKED")), true);
+  assert.equal(sql.some(statement => statement.includes("idempotency_key = COALESCE")), true);
+  assert.equal(sql.some(statement => statement.includes("state = 'sent'")), true);
+  assert.equal(sql.some(statement => statement.includes("state = 'failed'")), true);
+  assert.equal(sql.some(statement => statement.includes("state = 'dead_letter'")), true);
   assert.equal(sql.some(statement => statement.includes("SET status = $3")), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE fellow_assignments")), true);
   assert.equal(sql.some(statement => statement.includes("deletion_reason")), true);
