@@ -9,6 +9,7 @@ import { DirectoryAdapter } from "../src/directory-adapter.mjs";
 import { ArtifactVerifier } from "../src/artifact-verifier.mjs";
 import { WorkTrackingAdapter } from "../src/work-tracking-adapter.mjs";
 import { CalendarAdapter } from "../src/calendar-adapter.mjs";
+import { AnalyticsAdapter } from "../src/analytics-adapter.mjs";
 
 function createStore(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dna-ai-labs-"));
@@ -395,6 +396,64 @@ test("work tracking is feature-gated, provider-verified, refreshed, and audited"
     assert.equal(refreshed.lastVerifiedAt, "2026-07-02T01:00:00.000Z");
     assert.equal(store.auditEvents(admin).some(event => event.action === "work_item_created" && event.entityId === project.id), true);
     assert.equal(store.auditEvents(admin).some(event => event.action === "work_item_refreshed" && event.entityId === project.id), true);
+  } finally { dispose(); }
+});
+
+test("metric plans store approved source references and preserve verified data on refresh failure", () => {
+  let providerFails = false;
+  const analyticsAdapter = new AnalyticsAdapter({
+    refreshMetricSync: ({ plan }) => {
+      if (providerFails) throw new Error("provider secret raw metric payload");
+      return {
+        value: "42 active teams",
+        verifiedAt: "2026-07-02T00:00:00.000Z",
+        staleAt: "2026-08-01T00:00:00.000Z",
+        sourceRef: plan.sourceRef
+      };
+    }
+  });
+  const { store, dispose } = createStore({ analyticsAdapter });
+  try {
+    const admin = store.actor("admin");
+    const lead = store.actor("accessibility-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+
+    expectWorkflowError(() => store.upsertMetricPlan(store.actor("receiving-owner"), project.id, {
+      sourceType: "analytics_dashboard",
+      sourceRef: "dashboards/adoption-readiness",
+      hypothesisLabel: "Expected review time reduction"
+    }), "FORBIDDEN");
+    expectWorkflowError(() => store.upsertMetricPlan(lead, project.id, {
+      sourceType: "freeform",
+      sourceRef: "dashboards/adoption-readiness",
+      hypothesisLabel: "Expected review time reduction"
+    }), "INVALID_METRIC_SOURCE_TYPE");
+
+    const plan = store.upsertMetricPlan(lead, project.id, {
+      sourceType: "analytics_dashboard",
+      sourceRef: "dashboards/adoption-readiness",
+      hypothesisLabel: "Expected review time reduction"
+    });
+    assert.equal(plan.refreshStatus, "hypothesis");
+    assert.equal(plan.sourceRef, "dashboards/adoption-readiness");
+    assert.equal(store.project(project.id).metricPlan.hypothesisLabel, "Expected review time reduction");
+
+    const refreshed = store.refreshMetricPlan(lead, project.id);
+    assert.equal(refreshed.refreshStatus, "verified");
+    assert.equal(refreshed.verifiedValue, "42 active teams");
+    assert.equal(refreshed.verifiedAt, "2026-07-02T00:00:00.000Z");
+    assert.equal(refreshed.staleAt, "2026-08-01T00:00:00.000Z");
+
+    providerFails = true;
+    const stale = store.refreshMetricPlan(lead, project.id);
+    assert.equal(stale.refreshStatus, "stale");
+    assert.equal(stale.verifiedValue, "42 active teams");
+    assert.equal(stale.verifiedAt, "2026-07-02T00:00:00.000Z");
+    assert.equal(stale.lastErrorCode, "ANALYTICS_UNAVAILABLE");
+    assert.equal(JSON.stringify(stale).includes("provider secret"), false);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "metric_plan_created" && event.entityId === `${project.id}:primary`), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "metric_refreshed" && event.entityId === `${project.id}:primary`), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "metric_refresh_failed" && event.entityId === `${project.id}:primary`), true);
   } finally { dispose(); }
 });
 

@@ -12,6 +12,7 @@ import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifier.mjs";
 import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
+import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -509,6 +510,30 @@ class PostgresTransaction {
     ]);
   }
 
+  async getMetricPlan(projectId, metricKey = "primary") {
+    const result = await this.query(`SELECT project_id AS "projectId", metric_key AS "metricKey", source_type AS "sourceType",
+      source_ref AS "sourceRef", hypothesis_label AS "hypothesisLabel", verified_value AS "verifiedValue",
+      verified_at AS "verifiedAt", stale_at AS "staleAt", refresh_status AS "refreshStatus", last_error_code AS "lastErrorCode",
+      updated_at AS "updatedAt", updated_by AS "updatedBy"
+      FROM metric_plans WHERE organization_id = $1 AND project_id = $2 AND metric_key = $3`, [this.organizationId, projectId, metricKey]);
+    return result.rows?.[0] || null;
+  }
+
+  async upsertMetricPlan(plan) {
+    await this.query(`INSERT INTO metric_plans (
+        project_id, organization_id, metric_key, source_type, source_ref, hypothesis_label, verified_value, verified_at,
+        stale_at, refresh_status, last_error_code, updated_at, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      ON CONFLICT (project_id, organization_id, metric_key) DO UPDATE SET source_type = EXCLUDED.source_type,
+        source_ref = EXCLUDED.source_ref, hypothesis_label = EXCLUDED.hypothesis_label, verified_value = EXCLUDED.verified_value,
+        verified_at = EXCLUDED.verified_at, stale_at = EXCLUDED.stale_at, refresh_status = EXCLUDED.refresh_status,
+        last_error_code = EXCLUDED.last_error_code, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`, [
+      plan.projectId, this.organizationId, plan.metricKey || "primary", plan.sourceType, plan.sourceRef, plan.hypothesisLabel,
+      plan.verifiedValue || null, plan.verifiedAt || null, plan.staleAt || null, plan.refreshStatus, plan.lastErrorCode || null,
+      plan.updatedAt, plan.updatedBy
+    ]);
+  }
+
   async listProjectCalendarEvents(projectId) {
     const result = await this.query(`SELECT project_id AS "projectId", event_key AS "eventKey", event_type AS "eventType",
       decision_id AS "decisionId", provider, external_ref AS "externalRef", external_url AS "externalUrl",
@@ -687,7 +712,7 @@ class PostgresTransaction {
 
 /** Authoritative PostgreSQL workflow adapter. Every mutation includes its audit event in one transaction. */
 export class PostgresWorkflowAdapter {
-  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter() } = {}) {
+  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter(), analyticsAdapter = new DisabledAnalyticsAdapter() } = {}) {
     if (!queryable || typeof queryable.query !== "function" || typeof queryable.connect !== "function") throw new TypeError("A PostgreSQL pool with connect() is required.");
     this.queryable = queryable;
     this.organizationId = requiredText(organizationId, "organizationId");
@@ -697,6 +722,7 @@ export class PostgresWorkflowAdapter {
     this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
     this.workTracking = workTrackingAdapter;
     this.calendar = calendarAdapter;
+    this.analytics = analyticsAdapter;
   }
 
   async transaction(work) {
@@ -1373,6 +1399,56 @@ export class PostgresWorkflowAdapter {
     return this.transaction(tx => tx.getProjectWorkItem(projectId));
   }
 
+  async upsertMetricPlan(actor, projectId, input = {}) {
+    const project = await this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = String(input.metricKey ?? "primary").trim() || "primary";
+    const existing = await this.transaction(tx => tx.getMetricPlan(projectId, key));
+    const data = normalizeMetricPlanInput(input, existing || {});
+    const timestamp = now();
+    const next = {
+      projectId,
+      ...data,
+      verifiedValue: existing?.verifiedValue || null,
+      verifiedAt: existing?.verifiedAt || null,
+      staleAt: existing?.staleAt || null,
+      refreshStatus: existing?.refreshStatus || "hypothesis",
+      lastErrorCode: existing?.lastErrorCode || null,
+      updatedAt: timestamp,
+      updatedBy: actor.id
+    };
+    await this.transaction(async tx => {
+      await tx.upsertMetricPlan(next);
+      await tx.appendAudit(actor.id, existing ? "metric_plan_updated" : "metric_plan_created", "metric_plan", `${projectId}:${data.metricKey}`, existing, { projectId, metricKey: data.metricKey, sourceType: data.sourceType, refreshStatus: next.refreshStatus });
+    });
+    return this.transaction(tx => tx.getMetricPlan(projectId, data.metricKey));
+  }
+
+  async refreshMetricPlan(actor, projectId, metricKey = "primary") {
+    const project = await this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = String(metricKey ?? "primary").trim() || "primary";
+    const existing = await this.transaction(tx => tx.getMetricPlan(projectId, key));
+    if (!existing) throw new WorkflowError("METRIC_PLAN_NOT_FOUND", "Metric plan not found.", 404);
+    const timestamp = now();
+    try {
+      const verified = await this.analytics.refreshMetric(existing, { projectId, metricKey: key, actorId: actor.id });
+      const next = { ...existing, verifiedValue: verified.value, verifiedAt: verified.verifiedAt, staleAt: verified.staleAt, refreshStatus: "verified", lastErrorCode: null, updatedAt: timestamp, updatedBy: actor.id };
+      await this.transaction(async tx => {
+        await tx.upsertMetricPlan(next);
+        await tx.appendAudit(actor.id, "metric_refreshed", "metric_plan", `${projectId}:${key}`, { refreshStatus: existing.refreshStatus, verifiedAt: existing.verifiedAt }, { refreshStatus: "verified", verifiedAt: next.verifiedAt });
+      });
+    } catch (error) {
+      const code = error instanceof WorkflowError ? error.code : "ANALYTICS_UNAVAILABLE";
+      const next = { ...existing, refreshStatus: "stale", staleAt: timestamp, lastErrorCode: code, updatedAt: timestamp, updatedBy: actor.id };
+      await this.transaction(async tx => {
+        await tx.upsertMetricPlan(next);
+        await tx.appendAudit(actor.id, "metric_refresh_failed", "metric_plan", `${projectId}:${key}`, { refreshStatus: existing.refreshStatus, verifiedAt: existing.verifiedAt }, { refreshStatus: "stale", errorCode: code });
+      });
+    }
+    return this.transaction(tx => tx.getMetricPlan(projectId, key));
+  }
+
   async listCalendarEvents(actor, projectId) {
     requireRole(actor, Object.values(roles));
     await this.project(projectId);
@@ -1601,6 +1677,6 @@ export class PostgresWorkflowAdapter {
   }
 }
 
-export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, PoolConstructor = Pool } = {}) {
-  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter });
+export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, analyticsAdapter, PoolConstructor = Pool } = {}) {
+  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, analyticsAdapter });
 }

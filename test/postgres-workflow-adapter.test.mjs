@@ -52,6 +52,8 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
     await tx.deleteDeliveryKitItem("project-1", "architecture");
     await tx.upsertProjectWorkItem({ projectId: "project-1", provider: "tracker", externalRef: "WORK-123", externalUrl: "https://tracker.example/browse/WORK-123", externalStatus: "in_progress", lastVerifiedAt: "2026-06-20T00:15:00.000Z", linkedBy: "user-1", linkedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1", updatedAt: "2026-06-20T00:15:00.000Z" });
     await tx.getProjectWorkItem("project-1");
+    await tx.upsertMetricPlan({ projectId: "project-1", metricKey: "primary", sourceType: "analytics_dashboard", sourceRef: "dashboards/adoption-readiness", hypothesisLabel: "Expected review time reduction", verifiedValue: "42 teams", verifiedAt: "2026-06-20T00:18:00.000Z", staleAt: "2026-08-01T00:00:00.000Z", refreshStatus: "verified", lastErrorCode: null, updatedAt: "2026-06-20T00:18:00.000Z", updatedBy: "user-1" });
+    await tx.getMetricPlan("project-1");
     await tx.upsertProjectCalendarEvent({ projectId: "project-1", eventKey: "decision_meeting:decision-1", eventType: "decision_meeting", decisionId: "decision-1", provider: "calendar", externalRef: "event-1", externalUrl: "https://calendar.example/events/event-1", scheduledFor: "2026-07-10T16:00:00.000Z", lastVerifiedAt: "2026-06-20T00:20:00.000Z", createdBy: "user-1", createdAt: "2026-06-20T00:20:00.000Z", updatedBy: "user-1", updatedAt: "2026-06-20T00:20:00.000Z" });
     await tx.getProjectCalendarEvent("project-1", "decision_meeting:decision-1");
     await tx.listProjectCalendarEvents("project-1");
@@ -69,7 +71,7 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const sql = client.calls.map(call => call.sql);
   assert.equal(sql[0], "BEGIN");
   assert.equal(sql.at(-1), "COMMIT");
-  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "integration_attempts", "notification_outbox", "evidence_entries", "project_reviews", "delivery_kit_items", "project_work_items", "project_calendar_events", "project_follow_ups", "fellow_assignments", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "integration_attempts", "notification_outbox", "evidence_entries", "project_reviews", "delivery_kit_items", "project_work_items", "metric_plans", "project_calendar_events", "project_follow_ups", "fellow_assignments", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE cycles")), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE intake_drafts")), true);
   assert.equal(sql.some(statement => statement.includes("target = $11")), true);

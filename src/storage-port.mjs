@@ -24,6 +24,7 @@ export const storagePortMethods = Object.freeze([
   "getProjectWorkItem", "upsertProjectWorkItem",
   "listProjectCalendarEvents", "getProjectCalendarEvent", "upsertProjectCalendarEvent",
   "getProjectFollowUp", "upsertProjectFollowUp",
+  "getMetricPlan", "upsertMetricPlan",
   "listFellowAssignments", "getFellowAssignment", "insertFellowAssignment", "updateFellowAssignment",
   "getHandoff", "upsertHandoff",
   "findOpenDecision", "insertDecision", "getDecision", "listApprovals",

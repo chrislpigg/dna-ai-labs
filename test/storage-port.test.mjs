@@ -54,6 +54,8 @@ test("workflow service operates through the storage port and preserves durable a
     assert.equal(storagePortMethods.includes("updateProjectIntakeContent"), true);
     assert.equal(storagePortMethods.includes("getProjectFollowUp"), true);
     assert.equal(storagePortMethods.includes("upsertProjectFollowUp"), true);
+    assert.equal(storagePortMethods.includes("getMetricPlan"), true);
+    assert.equal(storagePortMethods.includes("upsertMetricPlan"), true);
     assert.equal(storagePortMethods.includes("getDecision"), true);
     assert.equal(storagePortMethods.includes("appendAudit"), true);
     assert.equal(storagePortMethods.includes("transaction"), true);
@@ -67,6 +69,22 @@ test("workflow service operates through the storage port and preserves durable a
     assert.equal(project.stage, stages.SUBMITTED);
     assert.equal(workflow.auditEvents(workflow.actor("lab-lead")).some(event => event.entityId === project.id && event.action === "intake_submitted"), true);
     assert.equal(workflow.listProjects().some(item => item.id === project.id), true);
+
+    storage.upsertMetricPlan({
+      projectId: project.id,
+      metricKey: "primary",
+      sourceType: "analytics_dashboard",
+      sourceRef: "dashboards/release-readiness",
+      hypothesisLabel: "Expected review duration reduction",
+      verifiedValue: "12 teams",
+      verifiedAt: "2026-07-02T00:00:00.000Z",
+      staleAt: "2026-08-01T00:00:00.000Z",
+      refreshStatus: "verified",
+      lastErrorCode: null,
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      updatedBy: "accessibility-lead"
+    });
+    assert.equal(storage.getMetricPlan(project.id).verifiedValue, "12 teams");
   } finally { dispose(); }
 });
 

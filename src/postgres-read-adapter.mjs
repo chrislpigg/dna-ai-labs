@@ -234,12 +234,13 @@ export class PostgresReadAdapter {
     const rows = asRows(projectResult);
     if (!rows.length) return [];
     const projectIds = rows.map(row => row.id);
-    const [gatesResult, evidenceResult, reviewsResult, deliveryKitResult, workItemsResult, calendarEventsResult, followUpsResult, decisionsResult, approvalsResult, handoffsResult] = await Promise.all([
+    const [gatesResult, evidenceResult, reviewsResult, deliveryKitResult, workItemsResult, metricPlansResult, calendarEventsResult, followUpsResult, decisionsResult, approvalsResult, handoffsResult] = await Promise.all([
       this.query("SELECT project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM project_gates WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY gate_key", [this.organizationId, projectIds]),
       this.query("SELECT id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM evidence_entries WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY observed_at DESC, created_at DESC", [this.organizationId, projectIds]),
       this.query("SELECT project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM project_reviews WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY review_type", [this.organizationId, projectIds]),
       this.query("SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM delivery_kit_items WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY item_key", [this.organizationId, projectIds]),
       this.query("SELECT project_id, provider, external_ref, external_url, external_status, last_verified_at, linked_by, linked_at, updated_by, updated_at FROM project_work_items WHERE organization_id = $1 AND project_id = ANY($2::text[])", [this.organizationId, projectIds]),
+      this.query("SELECT project_id, metric_key, source_type, source_ref, hypothesis_label, verified_value, verified_at, stale_at, refresh_status, last_error_code, updated_at, updated_by FROM metric_plans WHERE organization_id = $1 AND project_id = ANY($2::text[]) AND metric_key = 'primary'", [this.organizationId, projectIds]),
       this.query("SELECT project_id, event_key, event_type, decision_id, provider, external_ref, external_url, scheduled_for, last_verified_at, created_by, created_at, updated_by, updated_at FROM project_calendar_events WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY scheduled_for, event_key", [this.organizationId, projectIds]),
       this.query("SELECT project_id, due_on, status, reminder_notification_id, created_at, created_by, completed_at, completed_by FROM project_follow_ups WHERE organization_id = $1 AND project_id = ANY($2::text[])", [this.organizationId, projectIds]),
       this.query("SELECT id, project_id, outcome, rationale, status, requested_by, requested_at, finalized_by, finalized_at FROM decisions WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY requested_at DESC", [this.organizationId, projectIds]),
@@ -284,6 +285,13 @@ export class PostgresReadAdapter {
       projectId: row.project_id, provider: row.provider, externalRef: row.external_ref, externalUrl: row.external_url,
       externalStatus: row.external_status, lastVerifiedAt: dateValue(row.last_verified_at),
       linkedBy: row.linked_by, linkedAt: dateValue(row.linked_at), updatedBy: row.updated_by, updatedAt: dateValue(row.updated_at)
+    });
+    const metricPlans = new Map();
+    for (const row of asRows(metricPlansResult)) metricPlans.set(row.project_id, {
+      projectId: row.project_id, metricKey: row.metric_key, sourceType: row.source_type, sourceRef: row.source_ref,
+      hypothesisLabel: row.hypothesis_label, verifiedValue: row.verified_value, verifiedAt: dateValue(row.verified_at),
+      staleAt: dateValue(row.stale_at), refreshStatus: row.refresh_status, lastErrorCode: row.last_error_code,
+      updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by
     });
     const calendarEvents = new Map();
     for (const row of asRows(calendarEventsResult)) appendByProject(calendarEvents, row.project_id, {
@@ -348,6 +356,7 @@ export class PostgresReadAdapter {
         reviewsComplete: reviewRequirements.every(type => projectReviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status))),
         deliveryKit: projectDeliveryKit,
         workItem: workItems.get(row.id) || null,
+        metricPlan: metricPlans.get(row.id) || null,
         calendarEvents: calendarEvents.get(row.id) || [],
         followUp: followUps.get(row.id) || null,
         decisionHistory: projectDecisions.slice(0, 5),

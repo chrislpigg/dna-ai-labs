@@ -9,6 +9,7 @@ import { normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delive
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
+import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -172,13 +173,14 @@ function normalizeCalendarEventInput(input = {}, project) {
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
-  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter() } = {}) {
+  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter(), analyticsAdapter = new DisabledAnalyticsAdapter() } = {}) {
     this.storage = assertStoragePort(storage);
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
     this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
     this.workTracking = workTrackingAdapter;
     this.calendar = calendarAdapter;
+    this.analytics = analyticsAdapter;
   }
 
   actor(id) { return this.storage.getActor(id); }
@@ -869,6 +871,64 @@ export class WorkflowService {
       });
     });
     return this.storage.getProjectWorkItem(projectId);
+  }
+
+  upsertMetricPlan(actor, projectId, input = {}) {
+    const project = this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const existing = this.storage.getMetricPlan(projectId, String(input.metricKey ?? "primary").trim() || "primary");
+    const data = normalizeMetricPlanInput(input, existing || {});
+    const timestamp = now();
+    const next = {
+      projectId,
+      ...data,
+      verifiedValue: existing?.verifiedValue || null,
+      verifiedAt: existing?.verifiedAt || null,
+      staleAt: existing?.staleAt || null,
+      refreshStatus: existing?.refreshStatus || "hypothesis",
+      lastErrorCode: existing?.lastErrorCode || null,
+      updatedAt: timestamp,
+      updatedBy: actor.id
+    };
+    this.storage.transaction(() => {
+      this.storage.upsertMetricPlan(next);
+      this.storage.appendAudit(actor.id, existing ? "metric_plan_updated" : "metric_plan_created", "metric_plan", `${projectId}:${data.metricKey}`, existing, { projectId, metricKey: data.metricKey, sourceType: data.sourceType, refreshStatus: next.refreshStatus });
+    });
+    return this.storage.getMetricPlan(projectId, data.metricKey);
+  }
+
+  refreshMetricPlan(actor, projectId, metricKey = "primary") {
+    const project = this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = String(metricKey ?? "primary").trim() || "primary";
+    const existing = this.storage.getMetricPlan(projectId, key);
+    if (!existing) throw new WorkflowError("METRIC_PLAN_NOT_FOUND", "Metric plan not found.", 404);
+    const timestamp = now();
+    try {
+      const verified = this.analytics.refreshMetricSync(existing, { projectId, metricKey: key, actorId: actor.id });
+      const next = {
+        ...existing,
+        verifiedValue: verified.value,
+        verifiedAt: verified.verifiedAt,
+        staleAt: verified.staleAt,
+        refreshStatus: "verified",
+        lastErrorCode: null,
+        updatedAt: timestamp,
+        updatedBy: actor.id
+      };
+      this.storage.transaction(() => {
+        this.storage.upsertMetricPlan(next);
+        this.storage.appendAudit(actor.id, "metric_refreshed", "metric_plan", `${projectId}:${key}`, { refreshStatus: existing.refreshStatus, verifiedAt: existing.verifiedAt }, { refreshStatus: "verified", verifiedAt: next.verifiedAt });
+      });
+    } catch (error) {
+      const code = error instanceof WorkflowError ? error.code : "ANALYTICS_UNAVAILABLE";
+      const next = { ...existing, refreshStatus: "stale", staleAt: timestamp, lastErrorCode: code, updatedAt: timestamp, updatedBy: actor.id };
+      this.storage.transaction(() => {
+        this.storage.upsertMetricPlan(next);
+        this.storage.appendAudit(actor.id, "metric_refresh_failed", "metric_plan", `${projectId}:${key}`, { refreshStatus: existing.refreshStatus, verifiedAt: existing.verifiedAt }, { refreshStatus: "stale", errorCode: code });
+      });
+    }
+    return this.storage.getMetricPlan(projectId, key);
   }
 
   listCalendarEvents(actor, projectId) {

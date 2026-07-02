@@ -175,6 +175,16 @@ export class SqliteLabsStorage {
         FOREIGN KEY(linked_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
         CHECK(external_status IN ('unknown', 'not_started', 'in_progress', 'blocked', 'done'))
       );
+      CREATE TABLE IF NOT EXISTS metric_plans (
+        project_id TEXT NOT NULL, metric_key TEXT NOT NULL DEFAULT 'primary', source_type TEXT NOT NULL,
+        source_ref TEXT NOT NULL, hypothesis_label TEXT NOT NULL, verified_value TEXT, verified_at TEXT,
+        stale_at TEXT, refresh_status TEXT NOT NULL DEFAULT 'hypothesis', last_error_code TEXT,
+        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        PRIMARY KEY(project_id, metric_key),
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(updated_by) REFERENCES users(id),
+        CHECK(refresh_status IN ('hypothesis', 'verified', 'stale')),
+        CHECK(source_type IN ('analytics_dashboard', 'warehouse_query', 'experiment_report'))
+      );
       CREATE TABLE IF NOT EXISTS project_calendar_events (
         project_id TEXT NOT NULL, event_key TEXT NOT NULL, event_type TEXT NOT NULL, decision_id TEXT,
         provider TEXT NOT NULL, external_ref TEXT NOT NULL, external_url TEXT, scheduled_for TEXT NOT NULL,
@@ -406,6 +416,7 @@ export class SqliteLabsStorage {
     const reviews = this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason, artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(row.id);
     const deliveryKit = this.listDeliveryKitItems(row.id);
     const workItem = this.getProjectWorkItem(row.id);
+    const metricPlan = this.getMetricPlan(row.id);
     const calendarEvents = this.listProjectCalendarEvents(row.id);
     const followUp = this.getProjectFollowUp(row.id);
     const reviewsComplete = reviewRequirements.every(type => reviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
@@ -421,7 +432,7 @@ export class SqliteLabsStorage {
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
       cycleId: row.cycle_id, capacityUnits: row.capacity_units || 1,
       triageStatus: row.triage_status || "open", informationRequestedBy: row.information_requested_by, informationRequestedAt: row.information_requested_at,
-      sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, deliveryKit, workItem, calendarEvents, followUp, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
+      sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, deliveryKit, workItem, metricPlan, calendarEvents, followUp, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
       createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by,
       deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
     };
@@ -1071,6 +1082,44 @@ export class SqliteLabsStorage {
         updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
       .run(item.projectId, item.provider, item.externalRef, item.externalUrl, item.externalStatus, item.lastVerifiedAt,
         item.linkedBy, item.linkedAt, item.updatedBy, item.updatedAt);
+  }
+
+  serializeMetricPlan(row) {
+    return row ? {
+      projectId: row.project_id,
+      metricKey: row.metric_key,
+      sourceType: row.source_type,
+      sourceRef: row.source_ref,
+      hypothesisLabel: row.hypothesis_label,
+      verifiedValue: row.verified_value,
+      verifiedAt: row.verified_at,
+      staleAt: row.stale_at,
+      refreshStatus: row.refresh_status,
+      lastErrorCode: row.last_error_code,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by
+    } : null;
+  }
+
+  getMetricPlan(projectId, metricKey = "primary") {
+    const row = this.db.prepare(`SELECT project_id, metric_key, source_type, source_ref, hypothesis_label, verified_value,
+      verified_at, stale_at, refresh_status, last_error_code, updated_at, updated_by
+      FROM metric_plans WHERE project_id = ? AND metric_key = ?`).get(projectId, metricKey);
+    return this.serializeMetricPlan(row);
+  }
+
+  upsertMetricPlan(plan) {
+    this.db.prepare(`INSERT INTO metric_plans (
+        project_id, metric_key, source_type, source_ref, hypothesis_label, verified_value, verified_at,
+        stale_at, refresh_status, last_error_code, updated_at, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, metric_key) DO UPDATE SET source_type = excluded.source_type, source_ref = excluded.source_ref,
+        hypothesis_label = excluded.hypothesis_label, verified_value = excluded.verified_value, verified_at = excluded.verified_at,
+        stale_at = excluded.stale_at, refresh_status = excluded.refresh_status, last_error_code = excluded.last_error_code,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+      .run(plan.projectId, plan.metricKey || "primary", plan.sourceType, plan.sourceRef, plan.hypothesisLabel,
+        plan.verifiedValue || null, plan.verifiedAt || null, plan.staleAt || null, plan.refreshStatus,
+        plan.lastErrorCode || null, plan.updatedAt, plan.updatedBy);
   }
 
   serializeProjectCalendarEvent(row) {
