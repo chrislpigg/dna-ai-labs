@@ -235,4 +235,13 @@ Started: 2026-06-20
 - Files changed: `src/directory-adapter.mjs`, `test/directory-adapter.test.mjs`, `package.json`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: directory lookups must fail closed at the adapter boundary; downstream workflow should consume normalized active-person metadata, not provider-specific payloads or silent fallbacks.
 
+## 2026-07-02 — US-028 Validate owners through directory lookup
+
+- Wired directory validation into intake submission and resubmission for sponsor, receiving owner, metric owner, and project lead assignments. Demo storage now exposes a local directory adapter, while production workflow defaults to a disabled adapter unless an approved provider is configured.
+- Added synchronous directory validation support for the demo workflow and async validation for the PostgreSQL workflow adapter. Inactive, unknown, unavailable, or timed-out directory records reject submission with structured workflow errors.
+- Confirmed intake persistence continues to store only approved user reference metadata; raw directory-only fields such as email or employee number are not copied into project records.
+- Verification: `npm test` (83 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `src/directory-adapter.mjs`, `src/labs-store.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: perform directory validation at the workflow boundary and persist only stable user references/display metadata already allowed by the product spec.
+
 ---

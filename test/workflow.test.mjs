@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LabsStore } from "../src/labs-store.mjs";
 import { WorkflowError, outcomes, stages } from "../src/workflow-policy.mjs";
+import { DirectoryAdapter } from "../src/directory-adapter.mjs";
 
-function createStore() {
+function createStore(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dna-ai-labs-"));
-  const store = new LabsStore(join(directory, "labs.sqlite"));
+  const store = new LabsStore(join(directory, "labs.sqlite"), options);
   return { store, dispose: () => { store.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
@@ -36,6 +37,19 @@ const validIntake = {
   evidenceGate: true
 };
 
+function testDirectory(overrides = {}) {
+  return new DirectoryAdapter({
+    lookupPersonSync: id => overrides[id] === null ? null : ({
+      id, displayName: `Directory ${id}`, organization: "Verified Org", managerId: "admin", active: true,
+      employeeNumber: "not-stored", email: `${id}@example.invalid`, ...(overrides[id] || {})
+    }),
+    lookupPerson: async id => overrides[id] === null ? null : ({
+      id, displayName: `Directory ${id}`, organization: "Verified Org", managerId: "admin", active: true, ...(overrides[id] || {})
+    }),
+    searchPeople: async () => []
+  });
+}
+
 test("an intake needs meaningful evidence and adoption inputs", () => {
   const { store, dispose } = createStore();
   try {
@@ -45,6 +59,26 @@ test("an intake needs meaningful evidence and adoption inputs", () => {
     const project = store.createIntake(actor, validIntake);
     assert.equal(project.stage, stages.SUBMITTED);
     assert.equal(store.auditEvents(store.actor("lab-lead")).some(event => event.action === "intake_submitted"), true);
+  } finally { dispose(); }
+});
+
+test("intake owner assignments are validated through the company directory without persisting raw directory fields", () => {
+  const inactive = createStore({ directoryAdapter: testDirectory({ "receiving-owner": { active: false } }) });
+  try {
+    expectWorkflowError(() => inactive.store.createIntake(inactive.store.actor("submitter-1"), validIntake), "DIRECTORY_PERSON_INACTIVE");
+  } finally { inactive.dispose(); }
+
+  const unknown = createStore({ directoryAdapter: testDirectory({ "executive-sponsor": null }) });
+  try {
+    expectWorkflowError(() => unknown.store.createIntake(unknown.store.actor("submitter-1"), validIntake), "DIRECTORY_PERSON_NOT_FOUND");
+  } finally { unknown.dispose(); }
+
+  const { store, dispose } = createStore({ directoryAdapter: testDirectory() });
+  try {
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    assert.equal(project.sponsor.id, "executive-sponsor");
+    assert.equal(Object.hasOwn(project.sponsor, "email"), false);
+    assert.equal(Object.hasOwn(project.sponsor, "employeeNumber"), false);
   } finally { dispose(); }
 });
 

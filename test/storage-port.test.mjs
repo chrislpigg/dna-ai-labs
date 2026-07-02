@@ -13,7 +13,7 @@ function createWorkflow() {
   const storage = new SqliteLabsStorage(join(directory, "labs.sqlite"));
   return {
     storage,
-    workflow: new WorkflowService(storage),
+    workflow: new WorkflowService(storage, { directoryAdapter: storage.directoryAdapter() }),
     dispose: () => { storage.close(); rmSync(directory, { recursive: true, force: true }); }
   };
 }

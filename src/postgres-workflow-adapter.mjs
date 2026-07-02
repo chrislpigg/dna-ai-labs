@@ -5,6 +5,7 @@ import { deletionReasons } from "./workflow-service.mjs";
 import { retentionClassification, retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
+import { DisabledDirectoryAdapter, requireActiveDirectoryPerson } from "./directory-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -401,12 +402,13 @@ class PostgresTransaction {
 
 /** Authoritative PostgreSQL workflow adapter. Every mutation includes its audit event in one transaction. */
 export class PostgresWorkflowAdapter {
-  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"] } = {}) {
+  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter() } = {}) {
     if (!queryable || typeof queryable.query !== "function" || typeof queryable.connect !== "function") throw new TypeError("A PostgreSQL pool with connect() is required.");
     this.queryable = queryable;
     this.organizationId = requiredText(organizationId, "organizationId");
     this.reads = new PostgresReadAdapter({ queryable, organizationId: this.organizationId });
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
+    this.directory = directoryAdapter;
   }
 
   async transaction(work) {
@@ -553,6 +555,10 @@ export class PostgresWorkflowAdapter {
     if (input.transferDate && new Date(`${input.transferDate}T12:00:00`) <= new Date()) throw new WorkflowError("INVALID_TRANSFER_DATE", "Transfer target must be in the future.", 422);
     await this.actor(input.sponsorId); await this.actor(input.projectLeadId); await this.actor(input.metricOwnerId);
     await this.actor(input.receivingOwnerId);
+    await requireActiveDirectoryPerson(this.directory, input.sponsorId, "Sponsor");
+    await requireActiveDirectoryPerson(this.directory, input.receivingOwnerId, "Receiving owner");
+    await requireActiveDirectoryPerson(this.directory, input.metricOwnerId, "Metric owner");
+    await requireActiveDirectoryPerson(this.directory, input.projectLeadId, "Project lead");
     if (!input.adoptionGate || !input.evidenceGate) throw new WorkflowError("GATES_UNCONFIRMED", "Adoption and evidence gates must be confirmed before submission.", 422);
   }
 
@@ -970,6 +976,6 @@ export class PostgresWorkflowAdapter {
   }
 }
 
-export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, PoolConstructor = Pool } = {}) {
-  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins });
+export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, PoolConstructor = Pool } = {}) {
+  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter });
 }

@@ -19,6 +19,7 @@ import { WorkflowService } from "./workflow-service.mjs";
 import { retentionClassification, retentionUntil } from "./retention-policy.mjs";
 import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
 import { featureFlagDefaults } from "./feature-flags.mjs";
+import { DirectoryAdapter } from "./directory-adapter.mjs";
 
 const now = () => new Date().toISOString();
 const json = value => JSON.stringify(value ?? {});
@@ -206,6 +207,26 @@ export class SqliteLabsStorage {
 
   users() {
     return this.db.prepare("SELECT id, role FROM users WHERE active = 1 ORDER BY id").all();
+  }
+
+  directoryPerson(id) {
+    const row = this.db.prepare("SELECT id, name, role, active FROM users WHERE id = ?").get(id);
+    if (!row) return null;
+    return { id: row.id, displayName: row.name, organization: "Demo organization", managerId: row.role === roles.ADMIN ? null : "admin", active: Boolean(row.active) };
+  }
+
+  directorySearch(query) {
+    const text = `%${String(query ?? "").trim().toLowerCase()}%`;
+    return this.db.prepare("SELECT id, name, role, active FROM users WHERE active = 1 AND (lower(name) LIKE ? OR lower(id) LIKE ?) ORDER BY name LIMIT 20").all(text, text)
+      .map(row => ({ id: row.id, displayName: row.name, organization: "Demo organization", managerId: row.role === roles.ADMIN ? null : "admin", active: Boolean(row.active) }));
+  }
+
+  directoryAdapter() {
+    return new DirectoryAdapter({
+      lookupPersonSync: id => this.directoryPerson(id),
+      lookupPerson: async id => this.directoryPerson(id),
+      searchPeople: async query => this.directorySearch(query)
+    });
   }
 
   serializeCycle(row) {
@@ -840,7 +861,7 @@ export class SqliteLabsStorage {
 export class LabsStore extends WorkflowService {
   constructor(file, options = {}) {
     const storage = new SqliteLabsStorage(file, options);
-    super(storage, options);
+    super(storage, { ...options, directoryAdapter: options.directoryAdapter || storage.directoryAdapter() });
   }
 
   health() { return this.storage.health(); }

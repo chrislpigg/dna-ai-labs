@@ -33,10 +33,10 @@ export function normalizeDirectoryPerson(input = {}) {
 }
 
 export class DirectoryAdapter {
-  constructor({ lookupPerson, searchPeople, timeoutMs = defaultTimeoutMs } = {}) {
-    if (typeof lookupPerson !== "function") throw new TypeError("lookupPerson provider is required.");
+  constructor({ lookupPerson, lookupPersonSync, searchPeople, timeoutMs = defaultTimeoutMs } = {}) {
+    if (typeof lookupPerson !== "function" && typeof lookupPersonSync !== "function") throw new TypeError("lookupPerson provider is required.");
     if (typeof searchPeople !== "function") throw new TypeError("searchPeople provider is required.");
-    this.provider = { lookupPerson, searchPeople };
+    this.provider = { lookupPerson, lookupPersonSync, searchPeople };
     this.timeoutMs = Number(timeoutMs) > 0 ? Math.min(Number(timeoutMs), 10000) : defaultTimeoutMs;
   }
 
@@ -44,7 +44,21 @@ export class DirectoryAdapter {
     const userId = String(id ?? "").trim();
     if (!userId) throw new WorkflowError("INVALID_DIRECTORY_LOOKUP", "Directory lookup requires a user id.", 422);
     try {
-      const result = await withTimeout(() => this.provider.lookupPerson(userId), this.timeoutMs, "lookupPerson");
+      const result = await withTimeout(() => this.provider.lookupPerson ? this.provider.lookupPerson(userId) : this.provider.lookupPersonSync(userId), this.timeoutMs, "lookupPerson");
+      if (!result) throw new WorkflowError("DIRECTORY_PERSON_NOT_FOUND", "Directory person was not found.", 404);
+      return normalizeDirectoryPerson(result);
+    } catch (error) {
+      if (error instanceof WorkflowError) throw error;
+      throw directoryUnavailable({ operation: "lookupPerson" });
+    }
+  }
+
+  lookupPersonSync(id) {
+    const userId = String(id ?? "").trim();
+    if (!userId) throw new WorkflowError("INVALID_DIRECTORY_LOOKUP", "Directory lookup requires a user id.", 422);
+    try {
+      const result = this.provider.lookupPersonSync ? this.provider.lookupPersonSync(userId) : this.provider.lookupPerson(userId);
+      if (result && typeof result.then === "function") throw directoryUnavailable({ operation: "lookupPerson", mode: "sync" });
       if (!result) throw new WorkflowError("DIRECTORY_PERSON_NOT_FOUND", "Directory person was not found.", 404);
       return normalizeDirectoryPerson(result);
     } catch (error) {
@@ -69,6 +83,7 @@ export class DirectoryAdapter {
 
 export class DisabledDirectoryAdapter {
   async lookupPerson() { throw directoryUnavailable({ configured: false }); }
+  lookupPersonSync() { throw directoryUnavailable({ configured: false }); }
   async searchPeople() { throw directoryUnavailable({ configured: false }); }
 }
 
@@ -79,6 +94,12 @@ export function createDirectoryAdapter({ provider, timeoutMs } = {}) {
 
 export async function requireActiveDirectoryPerson(directory, id, label = "person") {
   const person = await directory.lookupPerson(id);
+  if (!person.active) throw new WorkflowError("DIRECTORY_PERSON_INACTIVE", `${label} is not active in the company directory.`, 422, { userId: person.id });
+  return person;
+}
+
+export function requireActiveDirectoryPersonSync(directory, id, label = "person") {
+  const person = directory.lookupPersonSync(id);
   if (!person.active) throw new WorkflowError("DIRECTORY_PERSON_INACTIVE", `${label} is not active in the company directory.`, 422, { userId: person.id });
   return person;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { assertStoragePort } from "./storage-port.mjs";
 import { retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
+import { DisabledDirectoryAdapter, requireActiveDirectoryPersonSync } from "./directory-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -145,9 +146,10 @@ function draftCollaboratorIds(draft) {
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
-  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"] } = {}) {
+  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter() } = {}) {
     this.storage = assertStoragePort(storage);
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
+    this.directory = directoryAdapter;
   }
 
   actor(id) { return this.storage.getActor(id); }
@@ -358,6 +360,10 @@ export class WorkflowService {
     if (input.transferDate && new Date(`${input.transferDate}T12:00:00`) <= new Date()) throw new WorkflowError("INVALID_TRANSFER_DATE", "Transfer target must be in the future.", 422);
     this.actor(input.sponsorId); this.actor(input.projectLeadId); this.actor(input.metricOwnerId);
     this.actor(input.receivingOwnerId);
+    requireActiveDirectoryPersonSync(this.directory, input.sponsorId, "Sponsor");
+    requireActiveDirectoryPersonSync(this.directory, input.receivingOwnerId, "Receiving owner");
+    requireActiveDirectoryPersonSync(this.directory, input.metricOwnerId, "Metric owner");
+    requireActiveDirectoryPersonSync(this.directory, input.projectLeadId, "Project lead");
     if (!input.adoptionGate || !input.evidenceGate) throw new WorkflowError("GATES_UNCONFIRMED", "Adoption and evidence gates must be confirmed before submission.", 422);
   }
 
