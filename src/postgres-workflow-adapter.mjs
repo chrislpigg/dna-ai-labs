@@ -114,6 +114,35 @@ function draftCollaboratorIds(draft) {
   return Array.isArray(draft.collaborators) ? draft.collaborators.map(collaborator => collaborator.userId) : (draft.collaboratorIds || []);
 }
 
+const cycleStatuses = Object.freeze(["planned", "active", "closed"]);
+
+function dateOnly(value, label) {
+  const text = String(value ?? "").trim();
+  const date = new Date(`${text}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(date.getTime())) {
+    throw new WorkflowError("INVALID_CYCLE_DATE", `${label} must be a valid YYYY-MM-DD date.`, 422);
+  }
+  return text;
+}
+
+function normalizeCycleInput(input = {}, existing = {}) {
+  const startsOn = dateOnly(input.startsOn ?? input.startDate ?? existing.startsOn, "Cycle start");
+  const endsOn = dateOnly(input.endsOn ?? input.endDate ?? existing.endsOn, "Cycle end");
+  if (new Date(`${endsOn}T12:00:00Z`) <= new Date(`${startsOn}T12:00:00Z`)) throw new WorkflowError("INVALID_CYCLE_DATES", "Cycle end date must be after the start date.", 422);
+  const theme = String(input.theme ?? existing.theme ?? "").trim();
+  if (!theme) throw new WorkflowError("INVALID_CYCLE_THEME", "Cycle theme is required.", 422);
+  const name = String(input.name ?? existing.name ?? theme).trim();
+  const capacityUnits = Number(input.capacityUnits ?? input.capacity ?? existing.capacityUnits);
+  if (!Number.isInteger(capacityUnits) || capacityUnits < 1 || capacityUnits > 50) throw new WorkflowError("INVALID_CYCLE_CAPACITY", "Cycle capacity must be between 1 and 50.", 422);
+  const rawGroup = input.steeringGroupIds ?? input.steeringGroup ?? existing.steeringGroupIds ?? [];
+  if (!Array.isArray(rawGroup)) throw new WorkflowError("INVALID_STEERING_GROUP", "Steering group must be an array of user ids.", 422);
+  const steeringGroupIds = [...new Set(rawGroup.map(value => String(value ?? "").trim()).filter(Boolean))];
+  if (!steeringGroupIds.length) throw new WorkflowError("INVALID_STEERING_GROUP", "At least one steering group member is required.", 422);
+  const status = String(input.status ?? existing.status ?? "planned").trim();
+  if (!cycleStatuses.includes(status)) throw new WorkflowError("INVALID_CYCLE_STATUS", "Cycle status is invalid.", 422);
+  return { name, theme, startsOn, endsOn, capacityUnits, steeringGroupIds, status };
+}
+
 class PostgresTransaction {
   constructor(client, organizationId) {
     this.client = client;
@@ -134,6 +163,24 @@ class PostgresTransaction {
       project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource,
       project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification,
       project.transferDate, project.sharedPlatformImpact, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy
+    ]);
+  }
+
+  async insertCycle(cycle) {
+    await this.query(`INSERT INTO cycles (
+      id, organization_id, name, theme, starts_on, ends_on, capacity_units, steering_group_ids, status
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`, [
+      cycle.id, this.organizationId, cycle.name, cycle.theme, cycle.startsOn, cycle.endsOn,
+      cycle.capacityUnits, JSON.stringify(cycle.steeringGroupIds), cycle.status
+    ]);
+  }
+
+  async updateCycle(id, cycle) {
+    await this.query(`UPDATE cycles
+      SET name = $3, theme = $4, starts_on = $5, ends_on = $6, capacity_units = $7, steering_group_ids = $8::jsonb, status = $9
+      WHERE organization_id = $1 AND id = $2`, [
+      this.organizationId, id, cycle.name, cycle.theme, cycle.startsOn, cycle.endsOn,
+      cycle.capacityUnits, JSON.stringify(cycle.steeringGroupIds), cycle.status
     ]);
   }
 
@@ -351,6 +398,7 @@ export class PostgresWorkflowAdapter {
   }
 
   getActorBySubject(subject, role) { return this.reads.getActorBySubject(subject, role); }
+  listCycles() { return this.reads.listCycles(); }
   listProjects() { return this.reads.listProjects(); }
   project(id) { return this.reads.getProject(id); }
   getProjectIncludingDeleted(id) { return this.reads.getProjectIncludingDeleted(id); }
@@ -380,6 +428,29 @@ export class PostgresWorkflowAdapter {
   listAuditEvents(limit) { return this.reads.listAuditEvents(limit); }
   health() { return this.reads.health(); }
   close() { return this.reads.close(); }
+
+  async createCycle(actor, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const cycle = { id: randomUUID(), ...normalizeCycleInput(input) };
+    for (const userId of cycle.steeringGroupIds) await this.actor(userId);
+    await this.transaction(async tx => {
+      await tx.insertCycle(cycle);
+      await tx.appendAudit(actor.id, "cycle_created", "cycle", cycle.id, null, { theme: cycle.theme, startsOn: cycle.startsOn, endsOn: cycle.endsOn, capacityUnits: cycle.capacityUnits, status: cycle.status });
+    });
+    return this.reads.getCycle(cycle.id);
+  }
+
+  async updateCycle(actor, id, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const existing = await this.reads.getCycle(id);
+    const cycle = normalizeCycleInput(input, existing);
+    for (const userId of cycle.steeringGroupIds) await this.actor(userId);
+    await this.transaction(async tx => {
+      await tx.updateCycle(id, cycle);
+      await tx.appendAudit(actor.id, "cycle_updated", "cycle", id, { theme: existing.theme, startsOn: existing.startsOn, endsOn: existing.endsOn, capacityUnits: existing.capacityUnits, status: existing.status }, { theme: cycle.theme, startsOn: cycle.startsOn, endsOn: cycle.endsOn, capacityUnits: cycle.capacityUnits, status: cycle.status });
+    });
+    return this.reads.getCycle(id);
+  }
 
   async actor(id) {
     const result = await this.reads.query("SELECT id FROM users WHERE organization_id = $1 AND id = $2 AND active = true", [this.organizationId, requiredText(id, "actor id")]);

@@ -68,6 +68,37 @@ export class PostgresReadAdapter {
     return projects[0];
   }
 
+  serializeCycle(row) {
+    return {
+      id: row.id,
+      name: row.name,
+      theme: row.theme,
+      startsOn: dateValue(row.starts_on),
+      endsOn: dateValue(row.ends_on),
+      capacityUnits: row.capacity_units,
+      steeringGroupIds: Array.isArray(row.steering_group_ids) ? row.steering_group_ids : [],
+      status: row.status
+    };
+  }
+
+  async listCycles() {
+    const result = await this.query(
+      "SELECT id, name, theme, starts_on, ends_on, capacity_units, steering_group_ids, status FROM cycles WHERE organization_id = $1 ORDER BY starts_on DESC, id",
+      [this.organizationId]
+    );
+    return asRows(result).map(row => this.serializeCycle(row));
+  }
+
+  async getCycle(id) {
+    const result = await this.query(
+      "SELECT id, name, theme, starts_on, ends_on, capacity_units, steering_group_ids, status FROM cycles WHERE organization_id = $1 AND id = $2",
+      [this.organizationId, requiredText(id, "cycle id")]
+    );
+    const row = asRows(result)[0];
+    if (!row) throw new WorkflowError("NOT_FOUND", "Cycle not found.", 404);
+    return this.serializeCycle(row);
+  }
+
   serializeIntakeDraft(row) {
     const collaborators = Array.isArray(row.collaborators) ? row.collaborators : [];
     const explicitIds = new Set(collaborators.map(collaborator => collaborator.userId));

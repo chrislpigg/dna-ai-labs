@@ -23,6 +23,8 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const client = new TransactionClientMock();
   const adapter = new PostgresWorkflowAdapter({ queryable: new PoolMock(client), organizationId: "org-a" });
   await adapter.transaction(async tx => {
+    await tx.insertCycle({ id: "cycle-1", name: "Cycle 02", theme: "Operational readiness", startsOn: "2026-10-01", endsOn: "2026-12-31", capacityUnits: 4, steeringGroupIds: ["lab-lead"], status: "planned" });
+    await tx.updateCycle("cycle-1", { name: "Cycle 02", theme: "Operational readiness", startsOn: "2026-10-01", endsOn: "2026-12-31", capacityUnits: 5, steeringGroupIds: ["lab-lead", "executive-sponsor"], status: "active" });
     await tx.insertIntakeDraft({ id: "draft-1", status: "Draft", ownerId: "user-1", collaboratorIds: ["user-2"], content: { title: "Early draft" }, createdAt: "2026-06-20T00:00:00.000Z", createdBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
     await tx.insertIntakeDraftCollaborator("draft-1", { userId: "user-2", permission: "edit", addedAt: "2026-06-20T00:00:00.000Z", addedBy: "user-1" });
     await tx.updateIntakeDraft("draft-1", { content: { title: "Updated draft" }, updatedAt: "2026-06-20T01:00:00.000Z", updatedBy: "user-2" });
@@ -45,7 +47,8 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const sql = client.calls.map(call => call.sql);
   assert.equal(sql[0], "BEGIN");
   assert.equal(sql.at(-1), "COMMIT");
-  for (const table of ["intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "evidence_entries", "project_reviews", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  for (const table of ["cycles", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "evidence_entries", "project_reviews", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  assert.equal(sql.some(statement => statement.includes("UPDATE cycles")), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE intake_drafts")), true);
   assert.equal(sql.some(statement => statement.includes("target = $11")), true);
   assert.equal(sql.some(statement => statement.includes("triage_status")), true);

@@ -180,4 +180,13 @@ Started: 2026-06-20
 - Files changed: `migrations/011_intake_revision_history.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: preserve immutable intake history in a separate revision table and expose comparison through authorized endpoints, so reviewer context improves without turning project list reads into a content leak.
 
+## 2026-07-02 — US-022 Add cycle administration data model
+
+- Added governed cycle metadata for theme, dates, capacity units, steering group members, and status in demo and PostgreSQL storage.
+- Added administrator-only cycle create/update workflow methods and API endpoints. Cycle mutations validate date ranges, capacity bounds, steering group IDs, and controlled status values before writing.
+- Added durable audit events for cycle creation and updates plus migration, workflow, storage-port, and PostgreSQL adapter coverage.
+- Verification: `npm test` (69 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/012_cycle_administration.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: keep cycle capacity and steering membership as server-owned program metadata, not client-side labels, so later selection and governance rules can depend on an audited source.
+
 ---

@@ -63,7 +63,8 @@ export class SqliteLabsStorage {
         id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1
       );
       CREATE TABLE IF NOT EXISTS cycles (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT NOT NULL, starts_on TEXT NOT NULL, ends_on TEXT NOT NULL, status TEXT NOT NULL
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT NOT NULL, starts_on TEXT NOT NULL, ends_on TEXT NOT NULL,
+        capacity_units INTEGER NOT NULL DEFAULT 3, steering_group_ids_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, title TEXT NOT NULL, stage TEXT NOT NULL, origin_team TEXT NOT NULL,
@@ -143,6 +144,8 @@ export class SqliteLabsStorage {
       );
     `);
     this.ensureColumn("projects", "adoption_acknowledged_by", "TEXT");
+    this.ensureColumn("cycles", "capacity_units", "INTEGER NOT NULL DEFAULT 3");
+    this.ensureColumn("cycles", "steering_group_ids_json", "TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn("projects", "adoption_acknowledged_at", "TEXT");
     this.ensureColumn("projects", "triage_status", "TEXT NOT NULL DEFAULT 'open'");
     this.ensureColumn("projects", "information_requested_by", "TEXT");
@@ -192,6 +195,19 @@ export class SqliteLabsStorage {
     return this.db.prepare("SELECT id, role FROM users WHERE active = 1 ORDER BY id").all();
   }
 
+  serializeCycle(row) {
+    return {
+      id: row.id,
+      name: row.name,
+      theme: row.theme,
+      startsOn: row.starts_on,
+      endsOn: row.ends_on,
+      capacityUnits: row.capacity_units,
+      steeringGroupIds: Array.isArray(parse(row.steering_group_ids_json)) ? parse(row.steering_group_ids_json) : [],
+      status: row.status
+    };
+  }
+
   audit(actorId, action, entityType, entityId, before, after) {
     const timestamp = now();
     const last = this.db.prepare("SELECT audit_sequence, event_hash FROM audit_events ORDER BY audit_sequence DESC LIMIT 1").get();
@@ -215,6 +231,16 @@ export class SqliteLabsStorage {
       FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
       JOIN users lead ON lead.id = p.project_lead_id WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC`).all();
     return rows.map(row => this.serializeProject(row));
+  }
+
+  listCycles() {
+    return this.db.prepare("SELECT * FROM cycles ORDER BY starts_on DESC, id").all().map(row => this.serializeCycle(row));
+  }
+
+  getCycle(id) {
+    const row = this.db.prepare("SELECT * FROM cycles WHERE id = ?").get(id);
+    if (!row) throw new WorkflowError("NOT_FOUND", "Cycle not found.", 404);
+    return this.serializeCycle(row);
   }
 
   serializeIntakeDraft(row) {
@@ -562,6 +588,16 @@ export class SqliteLabsStorage {
       sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, created_at, created_by, updated_at, updated_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(project.id, project.cycleId, project.title, project.stage, project.originTeam, project.users, project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource, project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification, project.transferDate, project.sharedPlatformImpact ? 1 : 0, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy);
+  }
+
+  insertCycle(cycle) {
+    this.db.prepare("INSERT INTO cycles (id, name, theme, starts_on, ends_on, capacity_units, steering_group_ids_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(cycle.id, cycle.name, cycle.theme, cycle.startsOn, cycle.endsOn, cycle.capacityUnits, json(cycle.steeringGroupIds), cycle.status);
+  }
+
+  updateCycle(id, cycle) {
+    this.db.prepare("UPDATE cycles SET name = ?, theme = ?, starts_on = ?, ends_on = ?, capacity_units = ?, steering_group_ids_json = ?, status = ? WHERE id = ?")
+      .run(cycle.name, cycle.theme, cycle.startsOn, cycle.endsOn, cycle.capacityUnits, json(cycle.steeringGroupIds), cycle.status, id);
   }
 
   insertIntakeDraft(draft) {

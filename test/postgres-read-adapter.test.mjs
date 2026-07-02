@@ -52,6 +52,20 @@ test("PostgreSQL reads are tenant-scoped and serialize portfolio evidence, revie
   assert.equal(database.calls.some(call => call.sql.includes("user-1")), false);
 });
 
+test("PostgreSQL cycle reads serialize capacity and steering metadata", async () => {
+  const database = new QueryMock([
+    { rows: [{ id: "cycle-1", name: "Cycle 02", theme: "Operational readiness", starts_on: "2026-10-01", ends_on: "2026-12-31", capacity_units: 4, steering_group_ids: ["lab-lead"], status: "planned" }] },
+    { rows: [{ id: "cycle-1", name: "Cycle 02", theme: "Operational readiness", starts_on: "2026-10-01", ends_on: "2026-12-31", capacity_units: 4, steering_group_ids: ["lab-lead"], status: "planned" }] }
+  ]);
+  const adapter = new PostgresReadAdapter({ queryable: database, organizationId: "org-a" });
+
+  assert.equal((await adapter.listCycles())[0].capacityUnits, 4);
+  assert.deepEqual((await adapter.getCycle("cycle-1")).steeringGroupIds, ["lab-lead"]);
+  assert.deepEqual(database.calls[0].params, ["org-a"]);
+  assert.deepEqual(database.calls[1].params, ["org-a", "cycle-1"]);
+  assert.match(database.calls[0].sql, /FROM cycles WHERE organization_id = \$1/);
+});
+
 test("PostgreSQL triage comment reads are tenant and project scoped", async () => {
   const database = new QueryMock([
     { rows: [{ id: "comment-1", projectId: "project-1", authorId: "user-2", kind: "request_for_information", comment: "Clarify the pilot cohort.", createdAt: "2026-06-20T00:30:00.000Z" }] }

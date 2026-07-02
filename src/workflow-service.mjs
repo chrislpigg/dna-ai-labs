@@ -68,6 +68,38 @@ const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, r
 const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEIVING_OWNER];
 const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN];
 const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
+const cycleStatuses = Object.freeze(["planned", "active", "closed"]);
+
+function dateOnly(value, label) {
+  const text = String(value ?? "").trim();
+  const date = new Date(`${text}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(date.getTime())) {
+    throw new WorkflowError("INVALID_CYCLE_DATE", `${label} must be a valid YYYY-MM-DD date.`, 422);
+  }
+  return text;
+}
+
+function normalizeCycleInput(input = {}, existing = {}) {
+  const startsOn = dateOnly(input.startsOn ?? input.startDate ?? existing.startsOn, "Cycle start");
+  const endsOn = dateOnly(input.endsOn ?? input.endDate ?? existing.endsOn, "Cycle end");
+  if (new Date(`${endsOn}T12:00:00Z`) <= new Date(`${startsOn}T12:00:00Z`)) {
+    throw new WorkflowError("INVALID_CYCLE_DATES", "Cycle end date must be after the start date.", 422);
+  }
+  const theme = String(input.theme ?? existing.theme ?? "").trim();
+  if (!theme) throw new WorkflowError("INVALID_CYCLE_THEME", "Cycle theme is required.", 422);
+  const name = String(input.name ?? existing.name ?? theme).trim();
+  const capacityUnits = Number(input.capacityUnits ?? input.capacity ?? existing.capacityUnits);
+  if (!Number.isInteger(capacityUnits) || capacityUnits < 1 || capacityUnits > 50) {
+    throw new WorkflowError("INVALID_CYCLE_CAPACITY", "Cycle capacity must be between 1 and 50.", 422);
+  }
+  const rawGroup = input.steeringGroupIds ?? input.steeringGroup ?? existing.steeringGroupIds ?? [];
+  if (!Array.isArray(rawGroup)) throw new WorkflowError("INVALID_STEERING_GROUP", "Steering group must be an array of user ids.", 422);
+  const steeringGroupIds = [...new Set(rawGroup.map(value => String(value ?? "").trim()).filter(Boolean))];
+  if (!steeringGroupIds.length) throw new WorkflowError("INVALID_STEERING_GROUP", "At least one steering group member is required.", 422);
+  const status = String(input.status ?? existing.status ?? "planned").trim();
+  if (!cycleStatuses.includes(status)) throw new WorkflowError("INVALID_CYCLE_STATUS", "Cycle status is invalid.", 422);
+  return { name, theme, startsOn, endsOn, capacityUnits, steeringGroupIds, status };
+}
 
 function normalizeTriageComment(input = {}, kind = "comment") {
   if (!triageCommentKinds.includes(kind)) throw new WorkflowError("INVALID_TRIAGE_COMMENT_KIND", "Triage comment type is invalid.", 422);
@@ -115,6 +147,7 @@ export class WorkflowService {
 
   actor(id) { return this.storage.getActor(id); }
   users() { return this.storage.listUsers(); }
+  listCycles() { return this.storage.listCycles(); }
   project(id) { return this.storage.getProject(id); }
   listProjects() { return this.storage.listProjects(); }
   intakeDraft(actor, id) {
@@ -127,6 +160,29 @@ export class WorkflowService {
     return this.storage.listIntakeDrafts(actor.id);
   }
   verifyAuditIntegrity() { return this.storage.verifyAuditIntegrity(); }
+
+  createCycle(actor, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const cycle = { id: randomUUID(), ...normalizeCycleInput(input) };
+    for (const userId of cycle.steeringGroupIds) this.actor(userId);
+    this.storage.transaction(() => {
+      this.storage.insertCycle(cycle);
+      this.storage.appendAudit(actor.id, "cycle_created", "cycle", cycle.id, null, { theme: cycle.theme, startsOn: cycle.startsOn, endsOn: cycle.endsOn, capacityUnits: cycle.capacityUnits, status: cycle.status });
+    });
+    return this.storage.getCycle(cycle.id);
+  }
+
+  updateCycle(actor, id, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const existing = this.storage.getCycle(id);
+    const cycle = normalizeCycleInput(input, existing);
+    for (const userId of cycle.steeringGroupIds) this.actor(userId);
+    this.storage.transaction(() => {
+      this.storage.updateCycle(id, cycle);
+      this.storage.appendAudit(actor.id, "cycle_updated", "cycle", id, { theme: existing.theme, startsOn: existing.startsOn, endsOn: existing.endsOn, capacityUnits: existing.capacityUnits, status: existing.status }, { theme: cycle.theme, startsOn: cycle.startsOn, endsOn: cycle.endsOn, capacityUnits: cycle.capacityUnits, status: cycle.status });
+    });
+    return this.storage.getCycle(id);
+  }
 
   requireDraftAccess(actor, draft) {
     requireRole(actor, draftAllowedRoles);

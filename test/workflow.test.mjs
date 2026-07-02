@@ -196,6 +196,36 @@ test("triage comments are chronological, participant-scoped, and RFI does not ad
   } finally { dispose(); }
 });
 
+test("administrators can create and update governed program cycles", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    expectWorkflowError(() => store.createCycle(store.actor("lab-lead"), {
+      name: "Unauthorized cycle", theme: "Quality", startsOn: "2026-10-01", endsOn: "2026-12-31", capacityUnits: 3, steeringGroupIds: ["lab-lead"], status: "planned"
+    }), "FORBIDDEN");
+    expectWorkflowError(() => store.createCycle(admin, {
+      name: "Bad dates", theme: "Quality", startsOn: "2026-12-31", endsOn: "2026-10-01", capacityUnits: 3, steeringGroupIds: ["lab-lead"], status: "planned"
+    }), "INVALID_CYCLE_DATES");
+    expectWorkflowError(() => store.createCycle(admin, {
+      name: "Bad capacity", theme: "Quality", startsOn: "2026-10-01", endsOn: "2026-12-31", capacityUnits: 0, steeringGroupIds: ["lab-lead"], status: "planned"
+    }), "INVALID_CYCLE_CAPACITY");
+
+    const cycle = store.createCycle(admin, {
+      name: "Cycle 02 · 2026", theme: "Operational readiness", startsOn: "2026-10-01", endsOn: "2026-12-31", capacityUnits: 4, steeringGroupIds: ["lab-lead", "executive-sponsor"], status: "planned"
+    });
+    assert.equal(cycle.capacityUnits, 4);
+    assert.deepEqual(cycle.steeringGroupIds, ["lab-lead", "executive-sponsor"]);
+    const updated = store.updateCycle(admin, cycle.id, { capacityUnits: 5, status: "active", steeringGroupIds: ["lab-lead"] });
+    assert.equal(updated.theme, "Operational readiness");
+    assert.equal(updated.capacityUnits, 5);
+    assert.equal(updated.status, "active");
+    assert.deepEqual(updated.steeringGroupIds, ["lab-lead"]);
+    assert.equal(store.listCycles().some(item => item.id === cycle.id), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "cycle_created" && event.entityId === cycle.id), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "cycle_updated" && event.entityId === cycle.id), true);
+  } finally { dispose(); }
+});
+
 test("only Lab leadership can select and start an incubation", () => {
   const { store, dispose } = createStore();
   try {
