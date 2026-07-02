@@ -337,4 +337,13 @@ Started: 2026-06-20
 - Files changed: `migrations/020_project_calendar_events.sql`, `server.mjs`, `src/calendar-adapter.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `package.json`, `test/calendar-adapter.test.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: calendar integration state should be an approved event reference plus scheduled time; provider payloads and attendee details stay outside the command center.
 
+## 2026-07-02 — US-039 Expose integration status in project workspace
+
+- Added an integration status panel to the project brief showing artifact-link verification, work-tracking status, and calendar event verification with last verification times.
+- Updated delivery-kit evidence copy so an unverified link is not presented as approved success, and added explicit warnings for artifact links that still need verification.
+- Restricted provider/reference diagnostics for work and calendar integrations to lab lead and admin roles while leaving high-level verification state visible to ordinary authorized users.
+- Verification: `npm test` (113 passing) and `npm run check` passed. Browser-control tooling was unavailable in this session; local demo-mode HTTP verification confirmed served integration markup, styles, and project payload metadata. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: integration UI should distinguish verified references from merely present links, and provider identifiers are diagnostics rather than general workspace copy.
+
 ---

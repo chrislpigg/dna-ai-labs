@@ -90,3 +90,15 @@ test("project brief renders Fellow assignment and manager acknowledgement views"
   assert.match(app, /managerAcknowledgedAt/);
   assert.match(app, /Capacity and manager acknowledgements/);
 });
+
+test("project brief exposes integration status without implying unverified success", () => {
+  assert.match(app, /function renderIntegrationStatus\(project\)/);
+  assert.match(app, /aria-label="Integration status"/);
+  assert.match(app, /artifactVerificationStatus/);
+  assert.match(app, /No verified work item linked/);
+  assert.match(app, /No verified calendar events scheduled/);
+  assert.match(app, /Needs verification before it should be treated as complete/);
+  assert.match(app, /function canViewIntegrationDiagnostics\(\) \{ return \["lab-lead", "admin"\]\.includes\(currentUser\?\.role\); \}/);
+  assert.match(app, /\$\{integrationStatus\}/);
+  assert.doesNotMatch(app, /Approved link<\/a>/);
+});

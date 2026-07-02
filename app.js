@@ -23,6 +23,7 @@ function escapeHtml(value = "") {
 function stageClass(stage) { return String(stage).replaceAll(" ", "-"); }
 function getProject(id) { return projects.find(project => project.id === id); }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${value}T12:00:00`)) : "Not set"; }
+function formatDateTime(value) { return value ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Not verified"; }
 function directoryAssignment(project, key) { return project.directoryAssignments?.[key] || null; }
 function assignmentHolder(project, key) {
   return key === "metricOwner" ? project.metricOwner : project[key];
@@ -42,6 +43,42 @@ function hasActiveDirectoryAssignment(project, key) {
 }
 function directoryWarningList(project) {
   return (project.directoryWarnings || []).map(warning => `<li><b>${escapeHtml(warning.code)}</b> · ${escapeHtml(warning.assignment)} · ${escapeHtml(warning.userId)}</li>`).join("");
+}
+function canViewIntegrationDiagnostics() { return ["lab-lead", "admin"].includes(currentUser?.role); }
+function verificationLabel(status) { return status === "verified" ? "Verified" : "Unverified"; }
+function verificationClass(status) { return status === "verified" ? "is-verified" : "is-unverified"; }
+function artifactIntegrationRows(project) {
+  const rows = [];
+  (project.evidence || []).forEach(entry => rows.push({ label: `Evidence · ${entry.evidenceType?.replaceAll("_", " ")}`, link: entry.sourceLink, status: entry.artifactVerificationStatus, at: entry.artifactVerifiedAt }));
+  (project.reviews || []).filter(review => review.evidenceLink).forEach(review => rows.push({ label: `Review · ${review.reviewType?.replaceAll("_", " ")}`, link: review.evidenceLink, status: review.artifactVerificationStatus, at: review.artifactVerifiedAt }));
+  (project.gates || []).filter(gate => gate.evidenceLink).forEach(gate => rows.push({ label: `Gate · ${gate.key?.replaceAll("_", " ")}`, link: gate.evidenceLink, status: gate.artifactVerificationStatus, at: gate.artifactVerifiedAt }));
+  (project.deliveryKit || []).filter(item => item.evidenceLink).forEach(item => rows.push({ label: `Delivery · ${deliveryKitLabel(item.itemKey)}`, link: item.evidenceLink, status: item.artifactVerificationStatus, at: item.artifactVerifiedAt }));
+  if (project.handoff?.adoptionPlanLink) rows.push({ label: "Handoff · adoption plan", link: project.handoff.adoptionPlanLink, status: project.handoff.artifactVerificationStatus, at: project.handoff.artifactVerifiedAt });
+  return rows;
+}
+function renderIntegrationStatus(project) {
+  const diagnostics = canViewIntegrationDiagnostics();
+  const artifacts = artifactIntegrationRows(project);
+  const verifiedArtifacts = artifacts.filter(row => row.status === "verified").length;
+  const work = project.workItem;
+  const calendarEvents = project.calendarEvents || [];
+  return `<section class="integration-status" aria-label="Integration status">
+    <div class="delivery-kit-heading"><p class="eyebrow">Integrations</p><p>${verifiedArtifacts}/${artifacts.length || 0} artifact link${artifacts.length === 1 ? "" : "s"} verified</p></div>
+    <div class="integration-grid">
+      <article class="integration-item">
+        <h4>Artifact links</h4>
+        ${artifacts.length ? `<ul>${artifacts.map(row => `<li><span>${escapeHtml(row.label)}</span><a href="${escapeHtml(row.link)}" target="_blank" rel="noreferrer">Open</a><b class="${verificationClass(row.status)}">${verificationLabel(row.status)}</b><small>${escapeHtml(formatDateTime(row.at))}</small>${row.status !== "verified" ? `<em>Needs verification before it should be treated as complete.</em>` : ""}</li>`).join("")}</ul>` : `<p class="empty-state" role="status">No approved artifact links recorded.</p>`}
+      </article>
+      <article class="integration-item">
+        <h4>Work tracking</h4>
+        ${work ? `<dl><div><dt>Status</dt><dd>${escapeHtml(work.externalStatus)}</dd></div><div><dt>Last verified</dt><dd>${escapeHtml(formatDateTime(work.lastVerifiedAt))}</dd></div>${diagnostics ? `<div><dt>Provider ref</dt><dd>${escapeHtml(work.provider)} · ${escapeHtml(work.externalRef)}</dd></div>` : ""}</dl>` : `<p class="empty-state" role="status">No verified work item linked.</p>`}
+      </article>
+      <article class="integration-item">
+        <h4>Calendar</h4>
+        ${calendarEvents.length ? `<ul>${calendarEvents.map(event => `<li><span>${escapeHtml(event.eventType.replaceAll("_", " "))}</span>${event.externalUrl ? `<a href="${escapeHtml(event.externalUrl)}" target="_blank" rel="noreferrer">Open</a>` : ""}<b class="is-verified">Verified</b><small>${escapeHtml(formatDateTime(event.lastVerifiedAt))}</small>${diagnostics ? `<em>${escapeHtml(event.provider)} · ${escapeHtml(event.externalRef)}</em>` : ""}</li>`).join("")}</ul>` : `<p class="empty-state" role="status">No verified calendar events scheduled.</p>`}
+      </article>
+    </div>
+  </section>`;
 }
 function deliveryKitLabel(key) { return String(key).replaceAll("_", " "); }
 function canEditDeliveryKit(project) {
@@ -68,7 +105,7 @@ function renderDeliveryKit(project) {
       const accepted = item.acceptedAt ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(new Date(item.acceptedAt)) : "Not accepted";
       return `<article class="delivery-kit-item" data-delivery-item="${escapeHtml(item.itemKey)}">
         <div><h4>${escapeHtml(label)}</h4><span class="delivery-status status-${escapeHtml(item.status)}">${escapeHtml(item.status.replaceAll("_", " "))}</span></div>
-        <dl><div><dt>Owner</dt><dd>${escapeHtml(item.ownerId || "Unassigned")}</dd></div><div><dt>Evidence</dt><dd>${item.evidenceLink ? `<a href="${escapeHtml(item.evidenceLink)}" target="_blank" rel="noreferrer">Approved link</a>` : "Missing"}</dd></div><div><dt>Accepted</dt><dd>${escapeHtml(accepted)}</dd></div></dl>
+        <dl><div><dt>Owner</dt><dd>${escapeHtml(item.ownerId || "Unassigned")}</dd></div><div><dt>Evidence</dt><dd>${item.evidenceLink ? `<a href="${escapeHtml(item.evidenceLink)}" target="_blank" rel="noreferrer">${escapeHtml(verificationLabel(item.artifactVerificationStatus))} link</a>` : "Missing"}</dd></div><div><dt>Accepted</dt><dd>${escapeHtml(accepted)}</dd></div></dl>
         ${editable ? `<div class="delivery-kit-editor">
           <label for="${statusId}">Status<select id="${statusId}" data-delivery-status><option value="not_started" ${item.status === "not_started" ? "selected" : ""}>Not started</option><option value="in_progress" ${item.status === "in_progress" ? "selected" : ""}>In progress</option><option value="complete" ${item.status === "complete" ? "selected" : ""}>Complete</option></select></label>
           <label for="${ownerId}">Owner<input id="${ownerId}" data-delivery-owner list="delivery-owner-options" value="${escapeHtml(item.ownerId || project.projectLead?.id || "")}" /></label>
@@ -492,6 +529,7 @@ function openProject(id) {
   const reviewSummary = project.reviewRequirements.map(type => project.reviews.find(review => review.reviewType === type) || { reviewType: type, status: "incomplete" });
   const decisionHistory = project.decisionHistory.length ? project.decisionHistory.map(decision => `<li><b>${escapeHtml(decision.outcome)}</b> · ${escapeHtml(decision.status)} <span>${escapeHtml(decision.rationale)}</span></li>`).join("") : "<li>No decisions requested yet.</li>";
   const directoryWarnings = directoryWarningList(project);
+  const integrationStatus = renderIntegrationStatus(project);
   const deliveryKitWorkspace = renderDeliveryKit(project);
   const fellowWorkspace = renderFellowAssignments(project);
   document.querySelector("#dialog-content").innerHTML = `
@@ -512,6 +550,7 @@ function openProject(id) {
       <div><dt>Transfer target</dt><dd>${formatDate(project.transferDate)}</dd></div>
     </dl>
     ${directoryWarnings ? `<section class="directory-warnings" aria-label="Directory assignment warnings"><p class="eyebrow">Directory warnings</p><ul>${directoryWarnings}</ul></section>` : ""}
+    ${integrationStatus}
     ${deliveryKitWorkspace}
     ${fellowWorkspace}
     <section class="evidence-summary"><p class="eyebrow">Pilot evidence</p><ul>${evidenceSummary}</ul></section>
