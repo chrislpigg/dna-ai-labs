@@ -144,4 +144,13 @@ Started: 2026-06-20
 - Files changed: `app.js`, `index.html`, `styles.css`, `package.json`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: in the static prototype, keep draft visibility decisions aligned with the server role contract and clear loaded draft state when the verified role changes to one that cannot access draft endpoints.
 
+## 2026-07-02 — US-018 Add intake collaborators
+
+- Added explicit intake draft collaborator records with draft-level `edit` permission metadata in SQLite demo storage and PostgreSQL migrations, while preserving the metadata-only draft boundary.
+- Added owner-only collaborator add/remove workflow methods and API routes. Collaborators can edit draft content but cannot change collaborators, change draft ownership, or submit by mutating draft status.
+- Audited collaborator add/remove operations as durable draft-collaborator events, separate from ordinary draft content updates.
+- Verification: `npm test` (57 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for the linked Vercel project, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/008_intake_draft_collaborators.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: model draft collaboration as first-class permission metadata rather than a mutable ID array; it gives the workflow a durable surface for authorization and audit without opening a new path for intake submission.
+
 ---

@@ -36,23 +36,35 @@ test("intake drafts can be saved incomplete and are visible only to owners and d
   try {
     const submitter = store.actor("submitter-1");
     const draft = store.createIntakeDraft(submitter, {
-      collaboratorIds: ["accessibility-lead"],
       content: { title: "  Draft release assistant  ", problem: "Still being scoped.", potentialReach: 0 }
     });
 
     assert.equal(draft.status, stages.DRAFT);
     assert.equal(draft.ownerId, "submitter-1");
     assert.equal(draft.content.title, "Draft release assistant");
+    assert.deepEqual(draft.collaborators, []);
     assert.equal(store.listProjects().some(project => project.id === draft.id), false);
     assert.equal(store.listIntakeDrafts(submitter).some(item => item.id === draft.id), true);
-    assert.equal(store.intakeDraft(store.actor("accessibility-lead"), draft.id).id, draft.id);
     expectWorkflowError(() => store.intakeDraft(store.actor("lab-lead"), draft.id), "FORBIDDEN");
+
+    const shared = store.addIntakeDraftCollaborator(submitter, draft.id, { userId: "accessibility-lead", permission: "edit" });
+    assert.deepEqual(shared.collaborators.map(collaborator => ({ userId: collaborator.userId, permission: collaborator.permission })), [{ userId: "accessibility-lead", permission: "edit" }]);
+    assert.equal(store.intakeDraft(store.actor("accessibility-lead"), draft.id).id, draft.id);
 
     const updated = store.updateIntakeDraft(store.actor("accessibility-lead"), draft.id, { content: { metric: "Cycle time" } });
     assert.equal(updated.content.metric, "Cycle time");
-    expectWorkflowError(() => store.updateIntakeDraft(store.actor("accessibility-lead"), draft.id, { collaboratorIds: ["lab-lead"] }), "FORBIDDEN");
+    expectWorkflowError(() => store.addIntakeDraftCollaborator(store.actor("accessibility-lead"), draft.id, { userId: "lab-lead", permission: "edit" }), "FORBIDDEN");
+    expectWorkflowError(() => store.updateIntakeDraft(store.actor("accessibility-lead"), draft.id, { ownerId: "accessibility-lead" }), "FORBIDDEN");
+    expectWorkflowError(() => store.updateIntakeDraft(store.actor("accessibility-lead"), draft.id, { status: stages.SUBMITTED }), "FORBIDDEN");
+    expectWorkflowError(() => store.updateIntakeDraft(submitter, draft.id, { collaboratorIds: ["lab-lead"] }), "COLLABORATOR_ENDPOINT_REQUIRED");
+
+    const removed = store.removeIntakeDraftCollaborator(submitter, draft.id, "accessibility-lead");
+    assert.deepEqual(removed.collaborators, []);
+    expectWorkflowError(() => store.intakeDraft(store.actor("accessibility-lead"), draft.id), "FORBIDDEN");
     assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_created"), true);
     assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_updated"), true);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_collaborator_added"), true);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_collaborator_removed"), true);
   } finally { dispose(); }
 });
 

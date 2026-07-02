@@ -109,6 +109,10 @@ async function api(req, res, url) {
   if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: await workflow.createIntake(requestActor, await body(req)) });
 
   let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
+  match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)\/collaborators$/);
+  if (req.method === "POST" && match) return respond(res, 200, { draft: await workflow.addIntakeDraftCollaborator(requestActor, match[1], await body(req)) });
+  match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)\/collaborators\/([^/]+)$/);
+  if (req.method === "DELETE" && match) return respond(res, 200, { draft: await workflow.removeIntakeDraftCollaborator(requestActor, match[1], decodeURIComponent(match[2])) });
   match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)$/);
   if (req.method === "GET" && match) return respond(res, 200, { draft: await workflow.intakeDraft(requestActor, match[1]) });
   if (req.method === "PATCH" && match) return respond(res, 200, { draft: await workflow.updateIntakeDraft(requestActor, match[1], await body(req)) });

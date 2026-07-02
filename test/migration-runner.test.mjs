@@ -20,10 +20,20 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("intake draft collaborator migration records explicit draft permissions", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "008_intake_draft_collaborators");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS intake_draft_collaborators/);
+  assert.match(migration.sql, /permission TEXT NOT NULL DEFAULT 'edit' CHECK \(permission = 'edit'\)/);
+  assert.match(migration.sql, /PRIMARY KEY \(draft_id, collaborator_id\)/);
+  assert.match(migration.sql, /intake_draft_collaborators_user_organization_fk FOREIGN KEY \(collaborator_id, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.match(migration.sql, /intake_draft_collaborators_organization_user_idx/);
 });
 
 test("intake draft migration keeps incomplete drafts tenant-scoped outside submitted projects", () => {

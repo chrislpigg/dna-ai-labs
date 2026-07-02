@@ -24,7 +24,9 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const adapter = new PostgresWorkflowAdapter({ queryable: new PoolMock(client), organizationId: "org-a" });
   await adapter.transaction(async tx => {
     await tx.insertIntakeDraft({ id: "draft-1", status: "Draft", ownerId: "user-1", collaboratorIds: ["user-2"], content: { title: "Early draft" }, createdAt: "2026-06-20T00:00:00.000Z", createdBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
-    await tx.updateIntakeDraft("draft-1", { collaboratorIds: ["user-2"], content: { title: "Updated draft" }, updatedAt: "2026-06-20T01:00:00.000Z", updatedBy: "user-2" });
+    await tx.insertIntakeDraftCollaborator("draft-1", { userId: "user-2", permission: "edit", addedAt: "2026-06-20T00:00:00.000Z", addedBy: "user-1" });
+    await tx.updateIntakeDraft("draft-1", { content: { title: "Updated draft" }, updatedAt: "2026-06-20T01:00:00.000Z", updatedBy: "user-2" });
+    await tx.deleteIntakeDraftCollaborator("draft-1", "user-2");
     await tx.insertProject({ id: "project-1", cycleId: "cycle-1", title: "Release evidence", stage: "Submitted", originTeam: "Developer Experience", users: "Release leads", potentialReach: 3, problem: "Evidence is fragmented.", metric: "Review duration", baseline: "3 hours", target: "1 hour", metricSource: "Tracker", metricOwnerId: "user-1", sponsorId: "user-2", receivingOwnerId: "user-3", projectLeadId: "user-1", riskClassification: "Internal", transferDate: "2026-12-18", sharedPlatformImpact: false, createdAt: "2026-06-20T00:00:00.000Z", createdBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
     await tx.insertEvidence({ id: "evidence-1", projectId: "project-1", evidenceType: "metric_result", result: "Faster", sampleSize: 12, confidence: "high", sourceLink: "https://docs.example/metric", observedAt: "2026-06-19", createdBy: "user-1", createdAt: "2026-06-20T00:00:00.000Z" });
     await tx.upsertReview({ projectId: "project-1", reviewType: "accessibility", status: "complete", evidenceLink: "https://docs.example/review", completedBy: "user-1", completedAt: "2026-06-20T00:00:00.000Z", exceptionReason: null });
@@ -37,8 +39,9 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const sql = client.calls.map(call => call.sql);
   assert.equal(sql[0], "BEGIN");
   assert.equal(sql.at(-1), "COMMIT");
-  for (const table of ["intake_drafts", "projects", "evidence_entries", "project_reviews", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  for (const table of ["intake_drafts", "intake_draft_collaborators", "projects", "evidence_entries", "project_reviews", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE intake_drafts")), true);
+  assert.equal(sql.some(statement => statement.includes("DELETE FROM intake_draft_collaborators")), true);
   for (const call of client.calls.slice(1, -1)) assert.equal(call.params.includes("org-a"), true);
   assert.equal(client.released, true);
 });

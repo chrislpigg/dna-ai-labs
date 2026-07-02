@@ -69,9 +69,17 @@ export class PostgresReadAdapter {
   }
 
   serializeIntakeDraft(row) {
+    const collaborators = Array.isArray(row.collaborators) ? row.collaborators : [];
+    const explicitIds = new Set(collaborators.map(collaborator => collaborator.userId));
+    const legacyIds = Array.isArray(row.collaborator_ids) ? row.collaborator_ids : [];
+    const allCollaborators = [
+      ...collaborators,
+      ...legacyIds.filter(userId => !explicitIds.has(userId)).map(userId => ({ userId, permission: "edit", addedAt: dateValue(row.created_at), addedBy: row.created_by }))
+    ];
     return {
       id: row.id, status: row.status, ownerId: row.owner_id,
-      collaboratorIds: Array.isArray(row.collaborator_ids) ? row.collaborator_ids : [],
+      collaborators: allCollaborators,
+      collaboratorIds: allCollaborators.map(collaborator => collaborator.userId),
       content: row.content && typeof row.content === "object" ? row.content : {},
       createdAt: dateValue(row.created_at), createdBy: row.created_by,
       updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by
@@ -80,7 +88,13 @@ export class PostgresReadAdapter {
 
   async getIntakeDraft(id) {
     const result = await this.query(
-      "SELECT * FROM intake_drafts WHERE organization_id = $1 AND id = $2",
+      `SELECT d.*,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('userId', c.collaborator_id, 'permission', c.permission, 'addedAt', c.added_at, 'addedBy', c.added_by) ORDER BY c.added_at, c.collaborator_id)
+          FROM intake_draft_collaborators c
+          WHERE c.organization_id = d.organization_id AND c.draft_id = d.id
+        ), '[]'::jsonb) AS collaborators
+       FROM intake_drafts d WHERE d.organization_id = $1 AND d.id = $2`,
       [this.organizationId, requiredText(id, "draft id")]
     );
     const row = asRows(result)[0];
@@ -90,9 +104,19 @@ export class PostgresReadAdapter {
 
   async listIntakeDrafts(actorId) {
     const result = await this.query(
-      `SELECT * FROM intake_drafts
-       WHERE organization_id = $1 AND (owner_id = $2 OR collaborator_ids ? $2)
-       ORDER BY updated_at DESC`,
+      `SELECT d.*,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('userId', c.collaborator_id, 'permission', c.permission, 'addedAt', c.added_at, 'addedBy', c.added_by) ORDER BY c.added_at, c.collaborator_id)
+          FROM intake_draft_collaborators c
+          WHERE c.organization_id = d.organization_id AND c.draft_id = d.id
+        ), '[]'::jsonb) AS collaborators
+       FROM intake_drafts d
+       WHERE d.organization_id = $1 AND (
+        d.owner_id = $2 OR d.collaborator_ids ? $2 OR EXISTS (
+          SELECT 1 FROM intake_draft_collaborators c WHERE c.organization_id = d.organization_id AND c.draft_id = d.id AND c.collaborator_id = $2
+        )
+       )
+       ORDER BY d.updated_at DESC`,
       [this.organizationId, requiredText(actorId, "actor id")]
     );
     return asRows(result).map(row => this.serializeIntakeDraft(row));

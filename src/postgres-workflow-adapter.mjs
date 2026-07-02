@@ -38,11 +38,35 @@ function normalizeDraftContent(input = {}) {
   }));
 }
 
-function normalizeCollaborators(value = []) {
-  if (!Array.isArray(value)) throw new WorkflowError("INVALID_COLLABORATORS", "Draft collaborators must be an array.", 422);
-  const ids = [...new Set(value.map(item => String(item ?? "").trim()).filter(Boolean))];
-  if (ids.length > 25) throw new WorkflowError("TOO_MANY_COLLABORATORS", "Draft collaborator limit exceeded.", 422);
-  return ids;
+const collaboratorPermissions = Object.freeze(["edit"]);
+
+function normalizeCollaboratorRecords(input = {}) {
+  const raw = Object.hasOwn(input, "collaborators")
+    ? input.collaborators
+    : (input.collaboratorIds || []).map(userId => ({ userId, permission: "edit" }));
+  if (!Array.isArray(raw)) throw new WorkflowError("INVALID_COLLABORATORS", "Draft collaborators must be an array.", 422);
+  const records = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const userId = String((typeof item === "object" && item !== null ? item.userId : item) ?? "").trim();
+    if (!userId || seen.has(userId)) continue;
+    const permission = String((typeof item === "object" && item !== null ? item.permission : "edit") ?? "edit").trim();
+    if (!collaboratorPermissions.includes(permission)) throw new WorkflowError("INVALID_COLLABORATOR_PERMISSION", "Draft collaborator permission is invalid.", 422);
+    records.push({ userId, permission });
+    seen.add(userId);
+  }
+  if (records.length > 25) throw new WorkflowError("TOO_MANY_COLLABORATORS", "Draft collaborator limit exceeded.", 422);
+  return records;
+}
+
+function normalizeSingleCollaborator(input = {}) {
+  const [record] = normalizeCollaboratorRecords({ collaborators: [input] });
+  if (!record) throw new WorkflowError("INVALID_COLLABORATOR", "A collaborator user id is required.", 422);
+  return record;
+}
+
+function draftCollaboratorIds(draft) {
+  return Array.isArray(draft.collaborators) ? draft.collaborators.map(collaborator => collaborator.userId) : (draft.collaboratorIds || []);
 }
 
 class PostgresTransaction {
@@ -72,17 +96,29 @@ class PostgresTransaction {
     await this.query(`INSERT INTO intake_drafts (
       id, organization_id, status, owner_id, collaborator_ids, content, created_at, created_by, updated_at, updated_by
     ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10)`, [
-      draft.id, this.organizationId, draft.status, draft.ownerId, JSON.stringify(draft.collaboratorIds),
+      draft.id, this.organizationId, draft.status, draft.ownerId, JSON.stringify([]),
       JSON.stringify(draft.content), draft.createdAt, draft.createdBy, draft.updatedAt, draft.updatedBy
     ]);
   }
 
   async updateIntakeDraft(id, draft) {
     await this.query(`UPDATE intake_drafts
-      SET collaborator_ids = $3::jsonb, content = $4::jsonb, updated_at = $5, updated_by = $6
+      SET content = $3::jsonb, updated_at = $4, updated_by = $5
       WHERE organization_id = $1 AND id = $2`, [
-      this.organizationId, id, JSON.stringify(draft.collaboratorIds), JSON.stringify(draft.content), draft.updatedAt, draft.updatedBy
+      this.organizationId, id, JSON.stringify(draft.content), draft.updatedAt, draft.updatedBy
     ]);
+  }
+
+  async insertIntakeDraftCollaborator(draftId, collaborator) {
+    await this.query(`INSERT INTO intake_draft_collaborators (
+      draft_id, organization_id, collaborator_id, permission, added_at, added_by
+    ) VALUES ($1, $2, $3, $4, $5, $6)`, [
+      draftId, this.organizationId, collaborator.userId, collaborator.permission, collaborator.addedAt, collaborator.addedBy
+    ]);
+  }
+
+  async deleteIntakeDraftCollaborator(draftId, collaboratorId) {
+    await this.query("DELETE FROM intake_draft_collaborators WHERE organization_id = $1 AND draft_id = $2 AND collaborator_id = $3", [this.organizationId, draftId, collaboratorId]);
   }
 
   async updateProjectStage(id, stage, actorId, timestamp) {
@@ -238,7 +274,7 @@ export class PostgresWorkflowAdapter {
   }
   requireDraftAccess(actor, draft) {
     requireRole(actor, draftAllowedRoles);
-    if (draft.ownerId !== actor.id && !draft.collaboratorIds.includes(actor.id)) {
+    if (draft.ownerId !== actor.id && !draftCollaboratorIds(draft).includes(actor.id)) {
       throw new WorkflowError("FORBIDDEN", "You do not have access to this draft.", 403);
     }
   }
@@ -286,15 +322,22 @@ export class PostgresWorkflowAdapter {
     requireRole(actor, draftAllowedRoles);
     const id = randomUUID();
     const timestamp = now();
-    const collaboratorIds = normalizeCollaborators(input.collaboratorIds);
-    for (const collaboratorId of collaboratorIds) await this.actor(collaboratorId);
+    const collaborators = normalizeCollaboratorRecords(input);
+    for (const collaborator of collaborators) {
+      if (collaborator.userId === actor.id) throw new WorkflowError("INVALID_COLLABORATOR", "The draft owner does not need collaborator access.", 422);
+      await this.actor(collaborator.userId);
+    }
     const draft = {
-      id, status: stages.DRAFT, ownerId: actor.id, collaboratorIds,
+      id, status: stages.DRAFT, ownerId: actor.id, collaborators, collaboratorIds: collaborators.map(collaborator => collaborator.userId),
       content: normalizeDraftContent(input.content || input),
       createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
     };
     await this.transaction(async tx => {
       await tx.insertIntakeDraft(draft);
+      for (const collaborator of collaborators) {
+        await tx.insertIntakeDraftCollaborator(id, { ...collaborator, addedAt: timestamp, addedBy: actor.id });
+        await tx.appendAudit(actor.id, "intake_draft_collaborator_added", "intake_draft_collaborator", `${id}:${collaborator.userId}`, null, { draftId: id, userId: collaborator.userId, permission: collaborator.permission });
+      }
       await tx.appendAudit(actor.id, "intake_draft_created", "intake_draft", id, null, { status: stages.DRAFT });
     });
     return this.intakeDraft(actor, id);
@@ -303,16 +346,47 @@ export class PostgresWorkflowAdapter {
   async updateIntakeDraft(actor, id, input = {}) {
     const draft = await this.reads.getIntakeDraft(id);
     this.requireDraftAccess(actor, draft);
-    const collaboratorIds = Object.hasOwn(input, "collaboratorIds") ? normalizeCollaborators(input.collaboratorIds) : draft.collaboratorIds;
-    if (actor.id !== draft.ownerId && collaboratorIds.join("\0") !== draft.collaboratorIds.join("\0")) {
-      throw new WorkflowError("FORBIDDEN", "Only the draft owner can change draft collaborators.", 403);
-    }
-    for (const collaboratorId of collaboratorIds) await this.actor(collaboratorId);
+    if (Object.hasOwn(input, "ownerId") && input.ownerId !== draft.ownerId) throw new WorkflowError("FORBIDDEN", "Draft ownership cannot be changed.", 403);
+    if (Object.hasOwn(input, "status") && input.status !== draft.status) throw new WorkflowError("FORBIDDEN", "Drafts cannot be submitted through the update endpoint.", 403);
+    if (Object.hasOwn(input, "collaboratorIds") || Object.hasOwn(input, "collaborators")) throw new WorkflowError("COLLABORATOR_ENDPOINT_REQUIRED", "Use the collaborator endpoint to change draft collaborators.", 409);
     const content = { ...draft.content, ...normalizeDraftContent(input.content || input) };
     const timestamp = now();
     await this.transaction(async tx => {
-      await tx.updateIntakeDraft(id, { content, collaboratorIds, updatedAt: timestamp, updatedBy: actor.id });
+      await tx.updateIntakeDraft(id, { content, updatedAt: timestamp, updatedBy: actor.id });
       await tx.appendAudit(actor.id, "intake_draft_updated", "intake_draft", id, { updatedAt: draft.updatedAt }, { updatedAt: timestamp });
+    });
+    return this.intakeDraft(actor, id);
+  }
+
+  async addIntakeDraftCollaborator(actor, id, input = {}) {
+    const draft = await this.reads.getIntakeDraft(id);
+    requireRole(actor, draftAllowedRoles);
+    if (draft.ownerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the draft owner can add collaborators.", 403);
+    const collaborator = normalizeSingleCollaborator(input);
+    if (collaborator.userId === draft.ownerId) throw new WorkflowError("INVALID_COLLABORATOR", "The draft owner does not need collaborator access.", 422);
+    if (draftCollaboratorIds(draft).includes(collaborator.userId)) throw new WorkflowError("COLLABORATOR_EXISTS", "Draft collaborator already exists.", 409);
+    await this.actor(collaborator.userId);
+    const timestamp = now();
+    await this.transaction(async tx => {
+      await tx.insertIntakeDraftCollaborator(id, { ...collaborator, addedAt: timestamp, addedBy: actor.id });
+      await tx.updateIntakeDraft(id, { content: draft.content, updatedAt: timestamp, updatedBy: actor.id });
+      await tx.appendAudit(actor.id, "intake_draft_collaborator_added", "intake_draft_collaborator", `${id}:${collaborator.userId}`, null, { draftId: id, userId: collaborator.userId, permission: collaborator.permission });
+    });
+    return this.intakeDraft(actor, id);
+  }
+
+  async removeIntakeDraftCollaborator(actor, id, collaboratorId) {
+    const draft = await this.reads.getIntakeDraft(id);
+    requireRole(actor, draftAllowedRoles);
+    if (draft.ownerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the draft owner can remove collaborators.", 403);
+    const userId = String(collaboratorId ?? "").trim();
+    const collaborator = (draft.collaborators || []).find(item => item.userId === userId);
+    if (!userId || !collaborator) throw new WorkflowError("NOT_FOUND", "Draft collaborator not found.", 404);
+    const timestamp = now();
+    await this.transaction(async tx => {
+      await tx.deleteIntakeDraftCollaborator(id, userId);
+      await tx.updateIntakeDraft(id, { content: draft.content, updatedAt: timestamp, updatedBy: actor.id });
+      await tx.appendAudit(actor.id, "intake_draft_collaborator_removed", "intake_draft_collaborator", `${id}:${userId}`, { draftId: id, userId, permission: collaborator.permission }, null);
     });
     return this.intakeDraft(actor, id);
   }

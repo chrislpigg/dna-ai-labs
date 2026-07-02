@@ -81,7 +81,16 @@ export class SqliteLabsStorage {
         created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
         FOREIGN KEY(owner_id) REFERENCES users(id), FOREIGN KEY(created_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id)
       );
+      CREATE TABLE IF NOT EXISTS intake_draft_collaborators (
+        draft_id TEXT NOT NULL, collaborator_id TEXT NOT NULL, permission TEXT NOT NULL DEFAULT 'edit',
+        added_at TEXT NOT NULL, added_by TEXT NOT NULL,
+        PRIMARY KEY(draft_id, collaborator_id),
+        FOREIGN KEY(draft_id) REFERENCES intake_drafts(id) ON DELETE CASCADE,
+        FOREIGN KEY(collaborator_id) REFERENCES users(id), FOREIGN KEY(added_by) REFERENCES users(id),
+        CHECK(permission = 'edit')
+      );
       CREATE INDEX IF NOT EXISTS intake_drafts_owner_updated_idx ON intake_drafts (owner_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS intake_draft_collaborators_user_idx ON intake_draft_collaborators (collaborator_id, draft_id);
       CREATE TABLE IF NOT EXISTS project_gates (
         project_id TEXT NOT NULL, gate_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'incomplete', evidence_link TEXT,
         completed_by TEXT, completed_at TEXT, exception_reason TEXT,
@@ -191,9 +200,17 @@ export class SqliteLabsStorage {
   }
 
   serializeIntakeDraft(row) {
+    const explicit = this.db.prepare("SELECT collaborator_id AS userId, permission, added_at AS addedAt, added_by AS addedBy FROM intake_draft_collaborators WHERE draft_id = ? ORDER BY added_at, collaborator_id").all(row.id);
+    const existing = new Set(explicit.map(collaborator => collaborator.userId));
+    const legacy = Array.isArray(parse(row.collaborator_ids_json)) ? parse(row.collaborator_ids_json) : [];
+    const collaborators = [
+      ...explicit,
+      ...legacy.filter(userId => !existing.has(userId)).map(userId => ({ userId, permission: "edit", addedAt: row.created_at, addedBy: row.created_by }))
+    ];
     return {
       id: row.id, status: row.status, ownerId: row.owner_id,
-      collaboratorIds: parse(row.collaborator_ids_json),
+      collaborators,
+      collaboratorIds: collaborators.map(collaborator => collaborator.userId),
       content: parse(row.content_json),
       createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by
     };
@@ -208,9 +225,11 @@ export class SqliteLabsStorage {
   listIntakeDrafts(actorId) {
     return this.db.prepare(`SELECT * FROM intake_drafts
       WHERE owner_id = ? OR EXISTS (
+        SELECT 1 FROM intake_draft_collaborators WHERE intake_draft_collaborators.draft_id = intake_drafts.id AND intake_draft_collaborators.collaborator_id = ?
+      ) OR EXISTS (
         SELECT 1 FROM json_each(intake_drafts.collaborator_ids_json) WHERE json_each.value = ?
       )
-      ORDER BY updated_at DESC`).all(actorId, actorId).map(row => this.serializeIntakeDraft(row));
+      ORDER BY updated_at DESC`).all(actorId, actorId, actorId).map(row => this.serializeIntakeDraft(row));
   }
 
   serializeProject(row) {
@@ -529,12 +548,21 @@ export class SqliteLabsStorage {
     this.db.prepare(`INSERT INTO intake_drafts (
       id, status, owner_id, collaborator_ids_json, content_json, created_at, created_by, updated_at, updated_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(draft.id, draft.status, draft.ownerId, json(draft.collaboratorIds), json(draft.content), draft.createdAt, draft.createdBy, draft.updatedAt, draft.updatedBy);
+      .run(draft.id, draft.status, draft.ownerId, json([]), json(draft.content), draft.createdAt, draft.createdBy, draft.updatedAt, draft.updatedBy);
   }
 
   updateIntakeDraft(id, draft) {
-    this.db.prepare("UPDATE intake_drafts SET collaborator_ids_json = ?, content_json = ?, updated_at = ?, updated_by = ? WHERE id = ?")
-      .run(json(draft.collaboratorIds), json(draft.content), draft.updatedAt, draft.updatedBy, id);
+    this.db.prepare("UPDATE intake_drafts SET content_json = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      .run(json(draft.content), draft.updatedAt, draft.updatedBy, id);
+  }
+
+  insertIntakeDraftCollaborator(draftId, collaborator) {
+    this.db.prepare("INSERT INTO intake_draft_collaborators (draft_id, collaborator_id, permission, added_at, added_by) VALUES (?, ?, ?, ?, ?)")
+      .run(draftId, collaborator.userId, collaborator.permission, collaborator.addedAt, collaborator.addedBy);
+  }
+
+  deleteIntakeDraftCollaborator(draftId, collaboratorId) {
+    this.db.prepare("DELETE FROM intake_draft_collaborators WHERE draft_id = ? AND collaborator_id = ?").run(draftId, collaboratorId);
   }
 
   updateProjectStage(id, stage, actorId, timestamp) {
