@@ -7,6 +7,8 @@ let demoActorId = "lab-lead";
 let auditLoaded = false;
 let intakeDrafts = [];
 let activeDraftId = null;
+let cycles = [];
+let editingCycleId = null;
 
 const activeStages = new Set(["Selected", "Incubating", "Decision pending"]);
 const candidateStages = new Set(["Draft", "Submitted", "Triage"]);
@@ -31,6 +33,7 @@ async function api(path, options = {}) {
 }
 
 function canUseDrafts() { return draftRoles.has(currentUser?.role); }
+function canAdminCycles() { return currentUser?.role === "admin"; }
 
 function setDraftStatus(message = "", tone = "info") {
   const status = document.querySelector("#draft-status");
@@ -172,6 +175,126 @@ async function refreshPortfolio() {
   projects = result;
   renderStats();
   renderProjects();
+}
+
+function cyclePayloadFromForm(formElement) {
+  const form = new FormData(formElement);
+  return {
+    name: form.get("name"),
+    theme: form.get("theme"),
+    startsOn: form.get("startsOn"),
+    endsOn: form.get("endsOn"),
+    capacityUnits: Number(form.get("capacityUnits")),
+    status: form.get("status"),
+    steeringGroupIds: form.getAll("steeringGroupIds")
+  };
+}
+
+function setCycleStatus(message = "", tone = "info") {
+  const status = document.querySelector("#cycle-status");
+  status.textContent = message;
+  status.className = `form-status ${tone === "error" ? "is-error" : ""}`.trim();
+}
+
+function showCycleValidation(messages = []) {
+  const summary = document.querySelector("#cycle-validation");
+  if (!messages.length) {
+    summary.hidden = true;
+    summary.innerHTML = "";
+    return;
+  }
+  summary.hidden = false;
+  summary.innerHTML = `<h4>Review cycle fields</h4><ul>${messages.map(message => `<li>${escapeHtml(message)}</li>`).join("")}</ul>`;
+  summary.focus();
+}
+
+function validateCyclePayload(payload) {
+  const messages = [];
+  if (!String(payload.name ?? "").trim()) messages.push("Name is required.");
+  if (!String(payload.theme ?? "").trim()) messages.push("Theme is required.");
+  if (!payload.startsOn) messages.push("Start date is required.");
+  if (!payload.endsOn) messages.push("End date is required.");
+  if (payload.startsOn && payload.endsOn && new Date(`${payload.endsOn}T12:00:00`) <= new Date(`${payload.startsOn}T12:00:00`)) messages.push("End date must be after start date.");
+  if (!Number.isInteger(payload.capacityUnits) || payload.capacityUnits < 1 || payload.capacityUnits > 50) messages.push("Capacity must be between 1 and 50.");
+  if (!payload.steeringGroupIds.length) messages.push("Select at least one steering group member.");
+  return messages;
+}
+
+function fillCycleForm(cycle = null) {
+  const form = document.querySelector("#cycle-form");
+  editingCycleId = cycle?.id || null;
+  document.querySelector("#cycle-form-title").textContent = cycle ? "Edit cycle" : "Create a cycle";
+  form.elements.name.value = cycle?.name || "";
+  form.elements.theme.value = cycle?.theme || "";
+  form.elements.startsOn.value = cycle?.startsOn || "";
+  form.elements.endsOn.value = cycle?.endsOn || "";
+  form.elements.capacityUnits.value = cycle?.capacityUnits || "";
+  form.elements.status.value = cycle?.status || "planned";
+  const selected = new Set(cycle?.steeringGroupIds || []);
+  [...form.elements.steeringGroupIds.options].forEach(option => { option.selected = selected.has(option.value); });
+  showCycleValidation([]);
+  setCycleStatus(cycle ? `Editing ${cycle.name}.` : "");
+}
+
+function renderCycleAdmin() {
+  const section = document.querySelector("#cycles");
+  const list = document.querySelector("#cycle-list");
+  if (!canAdminCycles()) {
+    section.setAttribute("aria-hidden", "true");
+    list.innerHTML = "";
+    return;
+  }
+  section.removeAttribute("aria-hidden");
+  list.innerHTML = cycles.length ? cycles.map(cycle => `
+    <article class="cycle-item ${cycle.id === editingCycleId ? "active" : ""}">
+      <div><h4>${escapeHtml(cycle.name)}</h4><p>${escapeHtml(cycle.theme)} · ${formatDate(cycle.startsOn)} to ${formatDate(cycle.endsOn)}</p></div>
+      <dl><div><dt>Capacity</dt><dd>${escapeHtml(cycle.capacityUnits)}</dd></div><div><dt>Status</dt><dd>${escapeHtml(cycle.status)}</dd></div></dl>
+      <button class="decision-button" type="button" data-cycle-edit="${escapeHtml(cycle.id)}">Edit</button>
+    </article>`).join("") : `<p class="empty-state">No cycles configured yet.</p>`;
+}
+
+async function loadCycles() {
+  if (!canAdminCycles()) {
+    cycles = [];
+    renderCycleAdmin();
+    return;
+  }
+  try {
+    const result = await api("/api/v1/cycles");
+    cycles = result.cycles || [];
+    renderCycleAdmin();
+  } catch (error) {
+    cycles = [];
+    renderCycleAdmin();
+    setCycleStatus(`Cycles could not be loaded: ${error.message}`, "error");
+  }
+}
+
+async function saveCycle(event) {
+  event.preventDefault();
+  if (!canAdminCycles()) return setCycleStatus("You do not have permission to administer cycles.", "error");
+  const payload = cyclePayloadFromForm(event.currentTarget);
+  const validation = validateCyclePayload(payload);
+  if (validation.length) {
+    setCycleStatus("Cycle could not be saved.", "error");
+    return showCycleValidation(validation);
+  }
+  showCycleValidation([]);
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const path = editingCycleId ? `/api/v1/cycles/${encodeURIComponent(editingCycleId)}` : "/api/v1/cycles";
+    const { cycle } = await api(path, { method: editingCycleId ? "PATCH" : "POST", body: JSON.stringify(payload) });
+    await loadCycles();
+    fillCycleForm(cycle);
+    setCycleStatus(`${cycle.name} saved.`);
+    showToast("Cycle configuration saved and audited.");
+  } catch (error) {
+    setCycleStatus(`Cycle could not be saved: ${error.message}`, "error");
+    showCycleValidation([error.message]);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderStats() {
@@ -367,12 +490,17 @@ function showToast(message) {
 }
 
 function showView(view) {
+  if (view === "cycles" && !canAdminCycles()) {
+    showToast("Cycle administration is available only to program administrators.");
+    view = "overview";
+  }
   document.querySelectorAll(".view").forEach(section => section.classList.toggle("active", section.id === view));
   document.querySelectorAll(".nav-link").forEach(link => link.classList.toggle("active", link.dataset.view === view));
-  const copy = { overview: ["Incubation portfolio", "Make useful things travel."], intake: ["Lab intake", "Bring a company problem."], cadence: ["Cycle 01", "Prove, transfer, repeat."], playbook: ["Operating playbook", "Create company-wide leverage."], audit: ["Governance record", "See the decision trail."] }[view];
+  const copy = { overview: ["Incubation portfolio", "Make useful things travel."], intake: ["Lab intake", "Bring a company problem."], cadence: ["Cycle 01", "Prove, transfer, repeat."], playbook: ["Operating playbook", "Create company-wide leverage."], cycles: ["Program administration", "Configure Lab cycles."], audit: ["Governance record", "See the decision trail."] }[view];
   document.querySelector("#page-kicker").textContent = copy[0];
   document.querySelector("#page-title").textContent = copy[1];
   if (view === "audit" && !auditLoaded) renderAudit();
+  if (view === "cycles") loadCycles();
 }
 
 document.addEventListener("click", event => {
@@ -387,6 +515,9 @@ document.addEventListener("click", event => {
   const draftButton = event.target.closest("[data-draft]");
   if (draftButton) resumeIntakeDraft(draftButton.dataset.draft);
   if (event.target.closest("[data-save-draft]")) saveIntakeDraft();
+  const cycleEdit = event.target.closest("[data-cycle-edit]");
+  if (cycleEdit) fillCycleForm(cycles.find(cycle => cycle.id === cycleEdit.dataset.cycleEdit));
+  if (event.target.closest("[data-cycle-reset]")) fillCycleForm(null);
   const decision = event.target.closest("[data-decision]");
   if (decision) requestDecision(decision.dataset.decision);
   if (event.target.closest("[data-select-project]")) projectAction("select");
@@ -430,6 +561,8 @@ document.querySelector("#intake-form").addEventListener("submit", async event =>
   } catch (error) { showToast(error.message); }
 });
 
+document.querySelector("#cycle-form").addEventListener("submit", saveCycle);
+
 async function init() {
   try {
     const session = await api("/api/v1/session");
@@ -440,8 +573,10 @@ async function init() {
     document.querySelector("#demo-actor-wrap").hidden = !demoMode;
     document.querySelector("#demo-actor").value = demoActorId;
     document.querySelector("#audit-nav").hidden = !["lab-lead", "executive-sponsor", "admin"].includes(user.role);
+    document.querySelector("#cycle-admin-nav").hidden = !canAdminCycles();
     await refreshPortfolio();
     await loadIntakeDrafts();
+    await loadCycles();
   } catch (error) {
     document.querySelector("#identity-note").textContent = "Sign-in required";
     intakeDrafts = [];
@@ -451,5 +586,5 @@ async function init() {
 }
 
 const initialView = window.location.hash.slice(1);
-if (["overview", "intake", "cadence", "playbook"].includes(initialView)) showView(initialView);
+if (["overview", "intake", "cadence", "playbook", "cycles"].includes(initialView)) showView(initialView);
 init();

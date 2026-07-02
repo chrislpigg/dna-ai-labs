@@ -25,3 +25,16 @@ test("draft content is not requested or rendered for roles outside draft permiss
   assert.match(app, /if \(!canUseDrafts\(\)\) \{[\s\S]*intakeDrafts = \[\];[\s\S]*activeDraftId = null;[\s\S]*return;/);
   assert.match(app, /document\.querySelector\("\[data-save-draft\]"\)\.hidden = !canUseDrafts\(\)/);
 });
+
+test("cycle administration UI is accessible and hidden from non-admin roles", () => {
+  assert.match(index, /id="cycle-admin-nav"[\s\S]*hidden/);
+  assert.match(index, /id="cycles"[\s\S]*aria-label="Cycle administration"/);
+  assert.match(index, /id="cycle-status"[\s\S]*role="alert"[\s\S]*aria-live="assertive"/);
+  assert.match(index, /id="cycle-validation"[\s\S]*class="validation-summary"[\s\S]*tabindex="-1"[\s\S]*hidden/);
+  assert.match(index, /id="cycle-list"[\s\S]*aria-live="polite"/);
+  assert.match(index, /id="cycle-form"[\s\S]*novalidate/);
+  assert.match(app, /function canAdminCycles\(\) \{ return currentUser\?\.role === "admin"; \}/);
+  assert.match(app, /document\.querySelector\("#cycle-admin-nav"\)\.hidden = !canAdminCycles\(\)/);
+  assert.match(app, /api\("\/api\/v1\/cycles"\)/);
+  assert.match(app, /api\(path, \{ method: editingCycleId \? "PATCH" : "POST"/);
+});

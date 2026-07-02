@@ -20,6 +20,7 @@
           <a class="nav-link" href="#intake" data-view="intake"><span>＋</span> New intake</a>
           <a class="nav-link" href="#cadence" data-view="cadence"><span>↗</span> 90-day launch</a>
           <a class="nav-link" href="#playbook" data-view="playbook"><span>▤</span> Playbook</a>
+          <a class="nav-link" href="#cycles" data-view="cycles" id="cycle-admin-nav" hidden><span>◫</span> Cycles</a>
           <a class="nav-link" href="#audit" data-view="audit" id="audit-nav" hidden><span>⌁</span> Audit log</a>
         </nav>
 
@@ -41,7 +42,7 @@
           </div>
           <div class="topbar-actions">
             <span class="data-note" id="identity-note">Loading secure session…</span>
-            <label class="demo-actor" id="demo-actor-wrap" hidden>Demo role<select id="demo-actor"><option value="lab-lead">Lab lead</option><option value="submitter-1">Submitter</option><option value="executive-sponsor">Executive sponsor</option><option value="platform-reviewer">Platform reviewer</option><option value="receiving-owner">Receiving owner</option><option value="accessibility-lead">Project lead</option></select></label>
+            <label class="demo-actor" id="demo-actor-wrap" hidden>Demo role<select id="demo-actor"><option value="lab-lead">Lab lead</option><option value="submitter-1">Submitter</option><option value="executive-sponsor">Executive sponsor</option><option value="platform-reviewer">Platform reviewer</option><option value="receiving-owner">Receiving owner</option><option value="accessibility-lead">Project lead</option><option value="admin">Program administrator</option></select></label>
             <button class="button button-primary" data-open-intake>+ Submit a problem</button>
           </div>
         </header>
@@ -139,6 +140,31 @@
             <article><span class="playbook-number">04</span><h3>Credit the system</h3><p>Partner visibly with central AI and platform teams. The brand is connective leadership.</p></article>
           </div>
           <div class="demo-checklist"><div><p class="eyebrow">Executive decision demo</p><h3>Six things to show</h3></div><ol><li>User problem and company relevance</li><li>Baseline versus pilot result</li><li>Short demo or user evidence</li><li>Adoption evidence and receiving owner</li><li>Risk and operating-cost status</li><li>A precise requested decision</li></ol></div>
+        </section>
+
+        <section id="cycles" class="view" aria-label="Cycle administration">
+          <div class="content-intro"><p class="eyebrow">Program administration</p><h2>Cycle configuration</h2><p>Configure intake windows, steering group membership, and approved Lab capacity for the production pilot.</p></div>
+          <p id="cycle-status" class="form-status" role="alert" aria-live="assertive"></p>
+          <div class="cycle-admin-layout">
+            <section class="cycle-list-panel" aria-labelledby="cycle-list-title">
+              <div class="section-heading compact"><div><p class="eyebrow">Cycles</p><h3 id="cycle-list-title">Configured cycles</h3></div><button class="button button-ghost" type="button" data-cycle-reset>New cycle</button></div>
+              <div id="cycle-list" class="cycle-list" aria-live="polite"></div>
+            </section>
+            <form id="cycle-form" class="cycle-form" aria-labelledby="cycle-form-title" novalidate>
+              <div class="section-heading compact"><div><p class="eyebrow">Details</p><h3 id="cycle-form-title">Create a cycle</h3></div></div>
+              <div id="cycle-validation" class="validation-summary" tabindex="-1" hidden></div>
+              <div class="form-grid">
+                <label>Name<input required name="name" placeholder="Cycle 02 · 2026" /></label>
+                <label>Theme<input required name="theme" placeholder="Operational readiness" /></label>
+                <label>Start date<input required name="startsOn" type="date" /></label>
+                <label>End date<input required name="endsOn" type="date" /></label>
+                <label>Capacity units<input required name="capacityUnits" type="number" min="1" max="50" /></label>
+                <label>Status<select required name="status"><option value="planned">Planned</option><option value="active">Active</option><option value="closed">Closed</option></select></label>
+                <label class="wide">Steering group<select required multiple name="steeringGroupIds" size="5"><option value="lab-lead">Morgan Lab Lead</option><option value="executive-sponsor">Jordan Executive Sponsor</option><option value="platform-reviewer">Parker Platform</option><option value="admin">Program Administrator</option></select></label>
+              </div>
+              <div class="form-actions"><p>Cycle changes are admin-only mutations and write durable audit events.</p><div class="form-action-buttons"><button class="button button-ghost" type="button" data-cycle-reset>Clear</button><button class="button button-primary" type="submit">Save cycle</button></div></div>
+            </form>
+          </div>
         </section>
 
         <section id="audit" class="view" aria-label="Audit log">
