@@ -235,6 +235,41 @@ export class PostgresReadAdapter {
     return asRows(result).map(row => ({ ...row, createdAt: dateValue(row.createdAt) }));
   }
 
+  serializeIntakeRevision(row) {
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      revisionNumber: row.revisionNumber,
+      content: row.content && typeof row.content === "object" ? row.content : {},
+      submittedBy: row.submittedBy,
+      submittedAt: dateValue(row.submittedAt)
+    };
+  }
+
+  async listIntakeRevisions(projectId) {
+    const result = await this.query(
+      `SELECT id, project_id AS "projectId", revision_number AS "revisionNumber", content,
+        submitted_by AS "submittedBy", submitted_at AS "submittedAt"
+       FROM intake_revisions
+       WHERE organization_id = $1 AND project_id = $2
+       ORDER BY revision_number`,
+      [this.organizationId, requiredText(projectId, "project id")]
+    );
+    return asRows(result).map(row => this.serializeIntakeRevision(row));
+  }
+
+  async getIntakeRevision(projectId, revisionNumber) {
+    const result = await this.query(
+      `SELECT id, project_id AS "projectId", revision_number AS "revisionNumber", content,
+        submitted_by AS "submittedBy", submitted_at AS "submittedAt"
+       FROM intake_revisions
+       WHERE organization_id = $1 AND project_id = $2 AND revision_number = $3`,
+      [this.organizationId, requiredText(projectId, "project id"), revisionNumber]
+    );
+    const row = asRows(result)[0];
+    return row ? this.serializeIntakeRevision(row) : null;
+  }
+
   async health() {
     try {
       const result = await this.queryable.query("SELECT 1 AS ok", []);

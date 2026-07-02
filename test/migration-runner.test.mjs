@@ -20,10 +20,22 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("intake revision migration stores immutable tenant-scoped submitted snapshots", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "011_intake_revision_history");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS intake_revisions/);
+  assert.match(migration.sql, /organization_id TEXT NOT NULL REFERENCES organizations\(id\)/);
+  assert.match(migration.sql, /revision_number INTEGER NOT NULL CHECK \(revision_number >= 1\)/);
+  assert.match(migration.sql, /content JSONB NOT NULL DEFAULT '\{\}'::jsonb/);
+  assert.match(migration.sql, /intake_revisions_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\)/);
+  assert.match(migration.sql, /intake_revisions_project_number_unique UNIQUE \(project_id, organization_id, revision_number\)/);
+  assert.match(migration.sql, /intake_revisions_organization_project_number_idx/);
 });
 
 test("intake submit migration allows submitted draft status for explicit transitions", () => {

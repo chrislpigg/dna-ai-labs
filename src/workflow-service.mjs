@@ -30,6 +30,39 @@ function normalizeDraftContent(input = {}) {
   }));
 }
 
+function intakeRevisionContent(input = {}) {
+  const content = normalizeDraftContent(input);
+  return {
+    ...content,
+    cycleId: content.cycleId || "cycle-2026-q3",
+    title: String(content.title ?? "").trim(),
+    originTeam: String(content.originTeam ?? "").trim(),
+    users: String(content.users ?? "").trim(),
+    potentialReach: Number(content.potentialReach),
+    problem: String(content.problem ?? "").trim(),
+    metric: String(content.metric ?? "").trim(),
+    baseline: String(content.baseline ?? "").trim(),
+    target: String(content.target ?? "").trim(),
+    metricSource: String(content.metricSource ?? "").trim(),
+    metricOwnerId: String(content.metricOwnerId ?? "").trim(),
+    sponsorId: String(content.sponsorId ?? "").trim(),
+    receivingOwnerId: String(content.receivingOwnerId ?? "").trim(),
+    projectLeadId: String(content.projectLeadId ?? "").trim(),
+    riskClassification: String(content.riskClassification ?? "").trim(),
+    transferDate: content.transferDate || null,
+    sharedPlatformImpact: Boolean(content.sharedPlatformImpact),
+    adoptionGate: Boolean(content.adoptionGate),
+    evidenceGate: Boolean(content.evidenceGate)
+  };
+}
+
+function changedRevisionFields(fromContent = {}, toContent = {}) {
+  const keys = [...new Set([...Object.keys(fromContent), ...Object.keys(toContent)])].sort();
+  return keys
+    .filter(field => JSON.stringify(fromContent[field] ?? null) !== JSON.stringify(toContent[field] ?? null))
+    .map(field => ({ field, before: fromContent[field] ?? null, after: toContent[field] ?? null }));
+}
+
 const collaboratorPermissions = Object.freeze(["edit"]);
 const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
 const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEIVING_OWNER];
@@ -218,18 +251,20 @@ export class WorkflowService {
   createIntake(actor, input) {
     requireRole(actor, intakeOwnerRoles);
     this.validateIntake(input);
+    const content = intakeRevisionContent(input);
     const id = randomUUID(); const timestamp = now();
     this.storage.transaction(() => {
       this.storage.insertProject({
-        id, cycleId: input.cycleId || "cycle-2026-q3", title: input.title.trim(), stage: stages.SUBMITTED,
-        originTeam: input.originTeam.trim(), users: input.users.trim(), potentialReach: Number(input.potentialReach),
-        problem: input.problem.trim(), metric: input.metric.trim(), baseline: input.baseline.trim(), target: input.target.trim(),
-        metricSource: input.metricSource.trim(), metricOwnerId: input.metricOwnerId, sponsorId: input.sponsorId,
-        receivingOwnerId: input.receivingOwnerId || null, projectLeadId: input.projectLeadId,
-        riskClassification: input.riskClassification, transferDate: input.transferDate || null,
-        sharedPlatformImpact: Boolean(input.sharedPlatformImpact), createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+        id, cycleId: content.cycleId, title: content.title, stage: stages.SUBMITTED,
+        originTeam: content.originTeam, users: content.users, potentialReach: content.potentialReach,
+        problem: content.problem, metric: content.metric, baseline: content.baseline, target: content.target,
+        metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId,
+        receivingOwnerId: content.receivingOwnerId || null, projectLeadId: content.projectLeadId,
+        riskClassification: content.riskClassification, transferDate: content.transferDate,
+        sharedPlatformImpact: content.sharedPlatformImpact, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
       });
-      this.storage.appendAudit(actor.id, "intake_submitted", "project", id, null, { stage: stages.SUBMITTED, title: input.title.trim() });
+      this.storage.insertIntakeRevision({ id: randomUUID(), projectId: id, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
+      this.storage.appendAudit(actor.id, "intake_submitted", "project", id, null, { stage: stages.SUBMITTED, title: content.title, revisionNumber: 1 });
     });
     return this.project(id);
   }
@@ -241,23 +276,65 @@ export class WorkflowService {
     if (draft.status !== stages.DRAFT) throw new WorkflowError("INVALID_STATE", "Only draft intakes can be submitted.", 409);
     const input = draft.content || {};
     this.validateIntake(input);
+    const content = intakeRevisionContent(input);
     const projectId = randomUUID();
     const timestamp = now();
     this.storage.transaction(() => {
       this.storage.insertProject({
-        id: projectId, cycleId: input.cycleId || "cycle-2026-q3", title: input.title.trim(), stage: stages.SUBMITTED,
-        originTeam: input.originTeam.trim(), users: input.users.trim(), potentialReach: Number(input.potentialReach),
-        problem: input.problem.trim(), metric: input.metric.trim(), baseline: input.baseline.trim(), target: input.target.trim(),
-        metricSource: input.metricSource.trim(), metricOwnerId: input.metricOwnerId, sponsorId: input.sponsorId,
-        receivingOwnerId: input.receivingOwnerId, projectLeadId: input.projectLeadId,
-        riskClassification: input.riskClassification, transferDate: input.transferDate || null,
-        sharedPlatformImpact: Boolean(input.sharedPlatformImpact), createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+        id: projectId, cycleId: content.cycleId, title: content.title, stage: stages.SUBMITTED,
+        originTeam: content.originTeam, users: content.users, potentialReach: content.potentialReach,
+        problem: content.problem, metric: content.metric, baseline: content.baseline, target: content.target,
+        metricSource: content.metricSource, metricOwnerId: content.metricOwnerId, sponsorId: content.sponsorId,
+        receivingOwnerId: content.receivingOwnerId, projectLeadId: content.projectLeadId,
+        riskClassification: content.riskClassification, transferDate: content.transferDate,
+        sharedPlatformImpact: content.sharedPlatformImpact, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
       });
+      this.storage.insertIntakeRevision({ id: randomUUID(), projectId, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
       this.storage.updateIntakeDraftStatus(id, stages.SUBMITTED, timestamp, actor.id);
-      this.storage.appendAudit(actor.id, "intake_submitted", "project", projectId, null, { stage: stages.SUBMITTED, title: input.title.trim(), draftId: id });
+      this.storage.appendAudit(actor.id, "intake_submitted", "project", projectId, null, { stage: stages.SUBMITTED, title: content.title, draftId: id, revisionNumber: 1 });
       this.storage.appendAudit(actor.id, "intake_draft_submitted", "intake_draft", id, { status: stages.DRAFT }, { status: stages.SUBMITTED, projectId });
     });
     return this.project(projectId);
+  }
+
+  listIntakeRevisions(actor, projectId) {
+    const project = this.project(projectId);
+    this.requireTriageProject(project);
+    this.requireTriageCommentAccess(actor, project);
+    return this.storage.listIntakeRevisions(projectId);
+  }
+
+  resubmitIntake(actor, projectId, input = {}) {
+    requireRole(actor, intakeOwnerRoles);
+    const project = this.project(projectId);
+    if (project.createdBy !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the intake owner can resubmit this intake.", 403);
+    if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Only submitted or triaged intakes can be resubmitted.", 409);
+    this.validateIntake(input);
+    const content = intakeRevisionContent(input);
+    const previous = this.storage.listIntakeRevisions(projectId).at(-1) || null;
+    const revisionNumber = Number(previous?.revisionNumber || 0) + 1;
+    const timestamp = now();
+    this.storage.transaction(() => {
+      this.storage.updateProjectIntakeContent(projectId, content, actor.id, timestamp);
+      this.storage.insertIntakeRevision({ id: randomUUID(), projectId, revisionNumber, content, submittedBy: actor.id, submittedAt: timestamp });
+      this.storage.appendAudit(actor.id, "intake_resubmitted", "project", projectId, previous ? { revisionNumber: previous.revisionNumber } : null, { revisionNumber, changedFields: previous ? changedRevisionFields(previous.content, content).map(change => change.field) : [] });
+    });
+    return { project: this.project(projectId), revision: this.storage.getIntakeRevision(projectId, revisionNumber) };
+  }
+
+  compareIntakeRevisions(actor, projectId, fromRevisionNumber, toRevisionNumber) {
+    const project = this.project(projectId);
+    this.requireTriageProject(project);
+    this.requireTriageCommentAccess(actor, project);
+    const fromNumber = Number(fromRevisionNumber);
+    const toNumber = Number(toRevisionNumber);
+    if (!Number.isInteger(fromNumber) || !Number.isInteger(toNumber) || fromNumber < 1 || toNumber < 1) {
+      throw new WorkflowError("INVALID_REVISION", "Revision numbers must be positive integers.", 422);
+    }
+    const from = this.storage.getIntakeRevision(projectId, fromNumber);
+    const to = this.storage.getIntakeRevision(projectId, toNumber);
+    if (!from || !to) throw new WorkflowError("REVISION_NOT_FOUND", "Intake revision not found.", 404);
+    return { projectId, fromRevision: from, toRevision: to, changes: changedRevisionFields(from.content, to.content) };
   }
 
   withdrawIntake(actor, id) {

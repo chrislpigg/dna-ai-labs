@@ -65,6 +65,21 @@ test("PostgreSQL triage comment reads are tenant and project scoped", async () =
   assert.match(database.calls[0].sql, /organization_id = \$1 AND project_id = \$2/);
 });
 
+test("PostgreSQL intake revision reads are tenant and project scoped", async () => {
+  const database = new QueryMock([
+    { rows: [{ id: "revision-1", projectId: "project-1", revisionNumber: 1, content: { title: "Submitted" }, submittedBy: "user-1", submittedAt: "2026-06-20T00:00:00.000Z" }] },
+    { rows: [{ id: "revision-2", projectId: "project-1", revisionNumber: 2, content: { title: "Updated" }, submittedBy: "user-1", submittedAt: "2026-06-21T00:00:00.000Z" }] }
+  ]);
+  const adapter = new PostgresReadAdapter({ queryable: database, organizationId: "org-a" });
+
+  assert.equal((await adapter.listIntakeRevisions("project-1"))[0].content.title, "Submitted");
+  assert.equal((await adapter.getIntakeRevision("project-1", 2)).revisionNumber, 2);
+  assert.deepEqual(database.calls[0].params, ["org-a", "project-1"]);
+  assert.deepEqual(database.calls[1].params, ["org-a", "project-1", 2]);
+  assert.match(database.calls[0].sql, /intake_revisions/);
+  assert.match(database.calls[1].sql, /revision_number = \$3/);
+});
+
 test("PostgreSQL user and audit reads scope the verified subject and never leak database errors", async () => {
   const database = new QueryMock([
     { rows: [{ id: "user-1" }] },

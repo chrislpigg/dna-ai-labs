@@ -108,6 +108,43 @@ test("draft submission is owner-only, validates selection data, and audits the t
   } finally { dispose(); }
 });
 
+test("intake resubmission creates immutable revisions and reviewers can compare changed fields", () => {
+  const { store, dispose } = createStore();
+  try {
+    const submitter = store.actor("submitter-1");
+    const labLead = store.actor("lab-lead");
+    const project = store.createIntake(submitter, validIntake);
+    const original = store.listIntakeRevisions(labLead, project.id);
+    assert.equal(original.length, 1);
+    assert.equal(original[0].revisionNumber, 1);
+    assert.equal(original[0].content.title, "Release readiness assistant");
+    assert.equal(original[0].content.potentialReach, 5);
+
+    store.requestTriageInformation(labLead, project.id, { comment: "Clarify the pilot scope." });
+    expectWorkflowError(() => store.resubmitIntake(labLead, project.id, { ...validIntake, target: "45 minutes" }), "FORBIDDEN");
+    const result = store.resubmitIntake(submitter, project.id, { ...validIntake, target: "45 minutes", potentialReach: 7 });
+    assert.equal(result.revision.revisionNumber, 2);
+    assert.equal(result.project.target, "45 minutes");
+    assert.equal(result.project.potentialReach, 7);
+    assert.equal(result.project.triageStatus, "open");
+
+    const revisions = store.listIntakeRevisions(labLead, project.id);
+    assert.equal(revisions.length, 2);
+    assert.equal(revisions[0].content.target, "1 hour");
+    assert.equal(revisions[1].content.target, "45 minutes");
+    expectWorkflowError(() => store.compareIntakeRevisions(store.actor("employee-1"), project.id, 1, 2), "FORBIDDEN");
+
+    const comparison = store.compareIntakeRevisions(labLead, project.id, 1, 2);
+    assert.deepEqual(comparison.changes.map(change => change.field), ["potentialReach", "target"]);
+    assert.deepEqual(comparison.changes.find(change => change.field === "target"), { field: "target", before: "1 hour", after: "45 minutes" });
+    expectWorkflowError(() => store.compareIntakeRevisions(labLead, project.id, 1, 99), "REVISION_NOT_FOUND");
+
+    store.acknowledgeAdoption(store.actor("receiving-owner"), project.id);
+    store.selectProject(labLead, project.id);
+    expectWorkflowError(() => store.resubmitIntake(submitter, project.id, validIntake), "INVALID_STATE");
+  } finally { dispose(); }
+});
+
 test("submitted or triaged intakes can be withdrawn only by their owner before selection", () => {
   const { store, dispose } = createStore();
   try {

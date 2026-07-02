@@ -92,6 +92,13 @@ export class SqliteLabsStorage {
       );
       CREATE INDEX IF NOT EXISTS intake_drafts_owner_updated_idx ON intake_drafts (owner_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS intake_draft_collaborators_user_idx ON intake_draft_collaborators (collaborator_id, draft_id);
+      CREATE TABLE IF NOT EXISTS intake_revisions (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision_number INTEGER NOT NULL, content_json TEXT NOT NULL,
+        submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL,
+        UNIQUE(project_id, revision_number),
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(submitted_by) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS intake_revisions_project_number_idx ON intake_revisions (project_id, revision_number);
       CREATE TABLE IF NOT EXISTS project_triage_comments (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, author_id TEXT NOT NULL, comment_kind TEXT NOT NULL DEFAULT 'comment',
         comment_text TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -596,6 +603,34 @@ export class SqliteLabsStorage {
   updateProjectTriageStatus(projectId, triageStatus, actorId, timestamp) {
     this.db.prepare("UPDATE projects SET triage_status = ?, information_requested_by = ?, information_requested_at = ?, updated_at = ?, updated_by = ? WHERE id = ?")
       .run(triageStatus, actorId, timestamp, timestamp, actorId, projectId);
+  }
+
+  listIntakeRevisions(projectId) {
+    return this.db.prepare(`SELECT id, project_id AS projectId, revision_number AS revisionNumber, content_json AS contentJson,
+      submitted_by AS submittedBy, submitted_at AS submittedAt
+      FROM intake_revisions WHERE project_id = ? ORDER BY revision_number`).all(projectId)
+      .map(revision => ({ ...revision, content: parse(revision.contentJson), contentJson: undefined }));
+  }
+
+  getIntakeRevision(projectId, revisionNumber) {
+    const revision = this.db.prepare(`SELECT id, project_id AS projectId, revision_number AS revisionNumber, content_json AS contentJson,
+      submitted_by AS submittedBy, submitted_at AS submittedAt
+      FROM intake_revisions WHERE project_id = ? AND revision_number = ?`).get(projectId, revisionNumber);
+    return revision ? { ...revision, content: parse(revision.contentJson), contentJson: undefined } : null;
+  }
+
+  insertIntakeRevision(revision) {
+    this.db.prepare("INSERT INTO intake_revisions (id, project_id, revision_number, content_json, submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(revision.id, revision.projectId, revision.revisionNumber, json(revision.content), revision.submittedBy, revision.submittedAt);
+  }
+
+  updateProjectIntakeContent(projectId, input, actorId, timestamp) {
+    this.db.prepare(`UPDATE projects SET title = ?, cycle_id = ?, origin_team = ?, target_users = ?, potential_reach = ?,
+      problem = ?, metric = ?, baseline = ?, target = ?, metric_source = ?, metric_owner_id = ?, sponsor_id = ?,
+      receiving_owner_id = ?, project_lead_id = ?, risk_classification = ?, transfer_date = ?, shared_platform_impact = ?,
+      triage_status = 'open', information_requested_by = NULL, information_requested_at = NULL,
+      updated_at = ?, updated_by = ? WHERE id = ?`)
+      .run(input.title, input.cycleId, input.originTeam, input.users, input.potentialReach, input.problem, input.metric, input.baseline, input.target, input.metricSource, input.metricOwnerId, input.sponsorId, input.receivingOwnerId, input.projectLeadId, input.riskClassification, input.transferDate, input.sharedPlatformImpact ? 1 : 0, timestamp, actorId, projectId);
   }
 
   updateProjectStage(id, stage, actorId, timestamp) {
