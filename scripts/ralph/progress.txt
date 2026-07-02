@@ -356,3 +356,12 @@ Started: 2026-06-20
 - Reusable learning: health records should make integration reliability diagnosable while keeping provider content and link targets out of durable operational telemetry.
 
 ---
+
+## 2026-07-02 — US-041 Add notifications outbox
+
+- Added a tenant-scoped notification outbox with recipient, notification type, state, related entity, attempt count, payload metadata, availability timestamp, and last error code.
+- Enqueued notification records transactionally alongside intake submission, adoption acknowledgement, review update, decision request, handoff acceptance, and follow-up scheduling mutations across the SQLite demo adapter and PostgreSQL production adapter.
+- Kept notification payloads to controlled metadata only, such as project id, outcome, review type, status, and scheduled dates; tests assert intake narrative, rationale, approved artifact URLs, calendar provider URLs, and provider content are not stored in outbox payloads.
+- Verification: `npm test` (119 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/022_notification_outbox.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: outbox rows must be part of the same transaction as the business mutation; a failed enqueue should roll back the mutation rather than create a workflow state with missing downstream notification intent.

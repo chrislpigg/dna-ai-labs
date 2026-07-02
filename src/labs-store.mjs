@@ -106,6 +106,14 @@ export class SqliteLabsStorage {
         CHECK(integration_type IN ('artifact', 'work_tracking', 'calendar')),
         CHECK(outcome IN ('success', 'failure', 'timeout'))
       );
+      CREATE TABLE IF NOT EXISTS notification_outbox (
+        id TEXT PRIMARY KEY, recipient_id TEXT NOT NULL, notification_type TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending', related_entity_type TEXT NOT NULL, related_entity_id TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0, payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, available_at TEXT NOT NULL, last_error_code TEXT,
+        FOREIGN KEY(recipient_id) REFERENCES users(id),
+        CHECK(state IN ('pending', 'claimed', 'sent', 'failed', 'dead_letter'))
+      );
       CREATE TABLE IF NOT EXISTS role_assignments (
         user_id TEXT PRIMARY KEY, assigned_role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
         assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL,
@@ -260,7 +268,9 @@ export class SqliteLabsStorage {
   }
 
   users() {
-    return this.db.prepare("SELECT id, role FROM users WHERE active = 1 ORDER BY id").all();
+    return this.db.prepare(`SELECT users.id, COALESCE(role_assignments.assigned_role, users.role) AS role
+      FROM users LEFT JOIN role_assignments ON role_assignments.user_id = users.id AND role_assignments.active = 1
+      WHERE users.active = 1 ORDER BY users.id`).all();
   }
 
   directoryPerson(id) {
@@ -701,6 +711,25 @@ export class SqliteLabsStorage {
     return this.db.prepare(`SELECT id, integration_type AS integrationType, operation, outcome, error_code AS errorCode,
       project_id AS projectId, entity_type AS entityType, actor_id AS actorId, occurred_at AS occurredAt
       FROM integration_attempts ORDER BY occurred_at DESC LIMIT ?`).all(bounded);
+  }
+
+  insertNotificationOutbox(notification) {
+    this.db.prepare(`INSERT INTO notification_outbox (
+      id, recipient_id, notification_type, state, related_entity_type, related_entity_id,
+      attempt_count, payload_json, created_at, available_at, last_error_code
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(notification.id, notification.recipientId, notification.notificationType, notification.state || "pending",
+        notification.relatedEntityType, notification.relatedEntityId, notification.attemptCount || 0,
+        json(notification.payload || {}), notification.createdAt, notification.availableAt, notification.lastErrorCode || null);
+  }
+
+  listNotificationOutbox(limit = 100) {
+    const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 250) : 100;
+    return this.db.prepare(`SELECT id, recipient_id AS recipientId, notification_type AS notificationType, state,
+      related_entity_type AS relatedEntityType, related_entity_id AS relatedEntityId, attempt_count AS attemptCount,
+      payload_json AS payloadJson, created_at AS createdAt, available_at AS availableAt, last_error_code AS lastErrorCode
+      FROM notification_outbox ORDER BY created_at DESC LIMIT ?`).all(bounded)
+      .map(row => ({ ...row, payload: parse(row.payloadJson), payloadJson: undefined }));
   }
 
   serializeRoleAssignment(row) {

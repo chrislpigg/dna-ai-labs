@@ -58,6 +58,19 @@ export class PostgresReadAdapter {
     return { id: user.id, name: "Verified user", role };
   }
 
+  async listUsers() {
+    const result = await this.query(
+      `SELECT users.id, COALESCE(role_assignments.assigned_role, users.role) AS role
+       FROM users
+       LEFT JOIN role_assignments ON role_assignments.organization_id = users.organization_id
+        AND role_assignments.user_id = users.id AND role_assignments.active = true
+       WHERE users.organization_id = $1 AND users.active = true
+       ORDER BY users.id`,
+      [this.organizationId]
+    );
+    return asRows(result);
+  }
+
   async getProject(projectId) {
     const projects = await this.listProjects({ projectId });
     if (!projects.length) throw new WorkflowError("NOT_FOUND", "Project not found.", 404);

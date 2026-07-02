@@ -20,10 +20,25 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts", "022_notification_outbox"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("notification outbox migration stores tenant-scoped delivery metadata only", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "022_notification_outbox");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS notification_outbox/);
+  assert.match(migration.sql, /recipient_id TEXT NOT NULL/);
+  assert.match(migration.sql, /notification_type TEXT NOT NULL/);
+  assert.match(migration.sql, /state TEXT NOT NULL DEFAULT 'pending'/);
+  assert.match(migration.sql, /related_entity_type TEXT NOT NULL/);
+  assert.match(migration.sql, /related_entity_id TEXT NOT NULL/);
+  assert.match(migration.sql, /attempt_count INTEGER NOT NULL DEFAULT 0 CHECK \(attempt_count >= 0\)/);
+  assert.match(migration.sql, /payload JSONB NOT NULL DEFAULT '\{\}'::jsonb/);
+  assert.match(migration.sql, /notification_outbox_recipient_organization_fk FOREIGN KEY \(recipient_id, organization_id\) REFERENCES users\(id, organization_id\) ON DELETE RESTRICT/);
+  assert.match(migration.sql, /notification_outbox_pending_idx ON notification_outbox \(organization_id, state, available_at, created_at\)/);
 });
 
 test("integration attempts migration stores non-sensitive health metadata", () => {

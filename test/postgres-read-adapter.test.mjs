@@ -108,6 +108,18 @@ test("PostgreSQL role assignment reads are tenant scoped", async () => {
   assert.match(database.calls[0].sql, /FROM role_assignments/);
 });
 
+test("PostgreSQL active user reads include effective role assignments", async () => {
+  const database = new QueryMock([
+    { rows: [{ id: "user-1", role: "submitter" }, { id: "user-2", role: "lab-lead" }] }
+  ]);
+  const adapter = new PostgresReadAdapter({ queryable: database, organizationId: "org-a" });
+
+  assert.deepEqual(await adapter.listUsers(), [{ id: "user-1", role: "submitter" }, { id: "user-2", role: "lab-lead" }]);
+  assert.deepEqual(database.calls[0].params, ["org-a"]);
+  assert.match(database.calls[0].sql, /COALESCE\(role_assignments\.assigned_role, users\.role\) AS role/);
+  assert.match(database.calls[0].sql, /users\.active = true/);
+});
+
 test("PostgreSQL triage comment reads are tenant and project scoped", async () => {
   const database = new QueryMock([
     { rows: [{ id: "comment-1", projectId: "project-1", authorId: "user-2", kind: "request_for_information", comment: "Clarify the pilot cohort.", createdAt: "2026-06-20T00:30:00.000Z" }] }

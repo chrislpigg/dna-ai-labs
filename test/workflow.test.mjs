@@ -465,6 +465,81 @@ test("calendar events are feature-gated, provider-verified, and audited", () => 
   } finally { dispose(); }
 });
 
+test("workflow mutations create transactional notification outbox entries without sensitive payloads", () => {
+  const calendarAdapter = new CalendarAdapter({
+    approvedOrigins: ["https://calendar.example"],
+    createEventSync: ({ eventType, scheduledFor }) => ({
+      provider: "calendar",
+      externalRef: `event-${eventType}`,
+      externalUrl: `https://calendar.example/events/${eventType}`,
+      scheduledFor,
+      lastVerifiedAt: "2026-07-02T02:00:00.000Z",
+      eventType
+    })
+  });
+  const { store, dispose } = createStore({ calendarAdapter });
+  try {
+    const admin = store.actor("admin");
+    const labLead = store.actor("lab-lead");
+    const lead = store.actor("accessibility-lead");
+    const receivingOwner = store.actor("receiving-owner");
+    expectWorkflowError(() => store.notificationOutbox(labLead), "FORBIDDEN");
+
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    store.acknowledgeAdoption(receivingOwner, project.id);
+    store.selectProject(labLead, project.id);
+    store.startIncubation(labLead, project.id);
+    store.setReview(store.actor("platform-reviewer"), project.id, "accessibility", { status: "complete", evidenceLink: "https://intranet.example/accessibility-review" });
+    store.requestDecision(lead, project.id, { outcome: outcomes.TRANSFER, rationale: "Pilot users reduced review time and the receiving team is ready." });
+    store.acceptHandoff(receivingOwner, project.id, {
+      adoptionPlanLink: "https://intranet.example/adoption",
+      supportEndDate: "2026-12-18",
+      followUpDate: "2026-08-01",
+      onboardingAcknowledged: true
+    });
+    store.setFeatureFlag(admin, "calendar_integration", { enabled: true });
+    store.scheduleCalendarEvent(receivingOwner, project.id, { eventType: "follow_up" });
+
+    const outbox = store.notificationOutbox(admin);
+    const types = new Set(outbox.map(notification => notification.notificationType));
+    for (const type of ["intake_submitted", "adoption_acknowledged", "review_updated", "decision_requested", "handoff_accepted", "follow_up_scheduled"]) {
+      assert.equal(types.has(type), true);
+    }
+    assert.equal(outbox.every(notification => notification.state === "pending"), true);
+    assert.equal(outbox.every(notification => notification.attemptCount === 0), true);
+    assert.equal(outbox.some(notification => notification.recipientId === "lab-lead" && notification.notificationType === "intake_submitted"), true);
+    assert.equal(outbox.some(notification => notification.recipientId === "accessibility-lead" && notification.notificationType === "handoff_accepted"), true);
+    assert.equal(outbox.some(notification => notification.relatedEntityType === "decision" && notification.payload.projectId === project.id), true);
+
+    const serialized = JSON.stringify(outbox);
+    for (const forbidden of [
+      validIntake.title,
+      validIntake.problem,
+      "Pilot users reduced review time",
+      "https://intranet.example",
+      "calendar.example"
+    ]) {
+      assert.equal(serialized.includes(forbidden), false);
+    }
+  } finally { dispose(); }
+});
+
+test("notification outbox writes roll back with their business mutation", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    const beforeCount = store.notificationOutbox(admin).length;
+    const original = store.storage.insertNotificationOutbox.bind(store.storage);
+    store.storage.insertNotificationOutbox = () => { throw new Error("outbox unavailable"); };
+    assert.throws(() => store.createIntake(store.actor("submitter-1"), { ...validIntake, title: "Rollback notification intake" }), /outbox unavailable/);
+    store.storage.insertNotificationOutbox = original;
+
+    assert.equal(store.notificationOutbox(admin).length, beforeCount);
+    assert.equal(store.listProjects().some(project => project.title === "Rollback notification intake"), false);
+    assert.equal(store.auditEvents(admin).some(event => event.after?.title === "Rollback notification intake"), false);
+  } finally { dispose(); }
+});
+
 test("integration health is admin-only and excludes sensitive provider payloads", () => {
   const workTrackingAdapter = new WorkTrackingAdapter({
     approvedOrigins: ["https://tracker.example"],

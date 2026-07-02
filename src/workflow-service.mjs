@@ -278,6 +278,39 @@ export class WorkflowService {
     return { summary, attempts };
   }
 
+  notificationOutbox(actor, limit = 100) {
+    requireRole(actor, [roles.ADMIN]);
+    return this.storage.listNotificationOutbox(limit);
+  }
+
+  notificationRecipientsForRoles(roleList = []) {
+    const wanted = new Set(roleList);
+    return this.storage.listUsers().filter(user => wanted.has(user.role)).map(user => user.id);
+  }
+
+  enqueueNotification(recipientId, notificationType, relatedEntityType, relatedEntityId, payload = {}, timestamp = now()) {
+    if (!recipientId) return;
+    this.storage.insertNotificationOutbox({
+      id: randomUUID(),
+      recipientId,
+      notificationType,
+      state: "pending",
+      relatedEntityType,
+      relatedEntityId,
+      attemptCount: 0,
+      payload,
+      createdAt: timestamp,
+      availableAt: timestamp,
+      lastErrorCode: null
+    });
+  }
+
+  enqueueRoleNotifications(roleList, notificationType, relatedEntityType, relatedEntityId, payload = {}, timestamp = now()) {
+    for (const recipientId of this.notificationRecipientsForRoles(roleList)) {
+      this.enqueueNotification(recipientId, notificationType, relatedEntityType, relatedEntityId, payload, timestamp);
+    }
+  }
+
   listRoleAssignments(actor) {
     requireRole(actor, [roles.ADMIN]);
     return this.storage.listRoleAssignments();
@@ -470,6 +503,7 @@ export class WorkflowService {
       });
       this.storage.insertIntakeRevision({ id: randomUUID(), projectId: id, revisionNumber: 1, content, submittedBy: actor.id, submittedAt: timestamp });
       this.storage.appendAudit(actor.id, "intake_submitted", "project", id, null, { stage: stages.SUBMITTED, title: content.title, revisionNumber: 1 });
+      this.enqueueRoleNotifications([roles.LAB_LEAD, roles.ADMIN], "intake_submitted", "project", id, { projectId: id, stage: stages.SUBMITTED }, timestamp);
     });
     return this.project(id);
   }
@@ -499,6 +533,7 @@ export class WorkflowService {
       this.storage.updateIntakeDraftStatus(id, stages.SUBMITTED, timestamp, actor.id);
       this.storage.appendAudit(actor.id, "intake_submitted", "project", projectId, null, { stage: stages.SUBMITTED, title: content.title, draftId: id, revisionNumber: 1 });
       this.storage.appendAudit(actor.id, "intake_draft_submitted", "intake_draft", id, { status: stages.DRAFT }, { status: stages.SUBMITTED, projectId });
+      this.enqueueRoleNotifications([roles.LAB_LEAD, roles.ADMIN], "intake_submitted", "project", projectId, { projectId, stage: stages.SUBMITTED, draftId: id }, timestamp);
     });
     return this.project(projectId);
   }
@@ -643,6 +678,7 @@ export class WorkflowService {
     this.storage.transaction(() => {
       this.storage.acknowledgeProjectAdoption(projectId, actor.id, timestamp);
       this.storage.appendAudit(actor.id, "adoption_acknowledged", "project", projectId, { adoptionAcknowledged: false }, { adoptionAcknowledged: true });
+      this.enqueueNotification(project.projectLead?.id, "adoption_acknowledged", "project", projectId, { projectId }, timestamp);
     });
     return this.project(projectId);
   }
@@ -721,6 +757,7 @@ export class WorkflowService {
       const complete = project.reviewRequirements.every(type => this.storage.listReviews(projectId).some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
       this.storage.upsertGate({ projectId, key: "reviews_complete", status: complete ? "complete" : "incomplete", evidenceLink: complete ? input.evidenceLink?.trim() || null : null, completedBy: complete ? actor.id : null, completedAt: complete ? timestamp : null, exceptionReason: null, ...artifactVerificationFields(complete ? verification : null) });
       this.storage.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete, artifactVerificationStatus: verification?.status || null });
+      this.enqueueNotification(project.projectLead?.id, "review_updated", "project_review", `${projectId}:${reviewType}`, { projectId, reviewType, status: input.status }, timestamp);
     });
     return this.project(projectId);
   }
@@ -869,6 +906,7 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "calendar_event_scheduled", "project_calendar_event", `${projectId}:${event.eventKey}`, before, {
         eventType: next.eventType, decisionId: next.decisionId, externalRef: next.externalRef, scheduledFor: next.scheduledFor, lastVerifiedAt: next.lastVerifiedAt
       });
+      if (event.eventType === "follow_up") this.enqueueNotification(project.projectLead?.id, "follow_up_scheduled", "project_calendar_event", `${projectId}:${event.eventKey}`, { projectId, eventType: event.eventType, scheduledFor: next.scheduledFor }, timestamp);
     });
     return this.storage.getProjectCalendarEvent(projectId, event.eventKey);
   }
@@ -946,6 +984,7 @@ export class WorkflowService {
       this.storage.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp, ...artifactVerificationFields(verification) });
       for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) this.storage.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
       this.storage.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, artifactVerificationStatus: verification.status });
+      this.enqueueNotification(project.projectLead?.id, "handoff_accepted", "handoff", projectId, { projectId, followUpDate: input.followUpDate }, timestamp);
     });
     return this.project(projectId);
   }
@@ -967,6 +1006,7 @@ export class WorkflowService {
       this.storage.insertDecision({ id, projectId, outcome: input.outcome, rationale: input.rationale.trim(), status: "requested", requestedBy: actor.id, requestedAt: timestamp });
       this.storage.updateProjectStage(projectId, stages.DECISION_PENDING, actor.id, timestamp);
       this.storage.appendAudit(actor.id, "decision_requested", "decision", id, null, { projectId, outcome: input.outcome, missingGates: missingGates(input.outcome, project.gates, project) });
+      this.enqueueRoleNotifications(requiredApproverRoles(input.outcome, project), "decision_requested", "decision", id, { projectId, outcome: input.outcome }, timestamp);
     });
     return this.decision(id);
   }
