@@ -18,6 +18,7 @@ import {
 import { WorkflowService } from "./workflow-service.mjs";
 import { retentionClassification, retentionUntil } from "./retention-policy.mjs";
 import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
+import { featureFlagDefaults } from "./feature-flags.mjs";
 
 const now = () => new Date().toISOString();
 const json = value => JSON.stringify(value ?? {});
@@ -93,6 +94,10 @@ export class SqliteLabsStorage {
       );
       CREATE INDEX IF NOT EXISTS intake_drafts_owner_updated_idx ON intake_drafts (owner_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS intake_draft_collaborators_user_idx ON intake_draft_collaborators (collaborator_id, draft_id);
+      CREATE TABLE IF NOT EXISTS feature_flags (
+        flag_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        FOREIGN KEY(updated_by) REFERENCES users(id)
+      );
       CREATE TABLE IF NOT EXISTS intake_revisions (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision_number INTEGER NOT NULL, content_json TEXT NOT NULL,
         submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL,
@@ -242,6 +247,10 @@ export class SqliteLabsStorage {
     const row = this.db.prepare("SELECT * FROM cycles WHERE id = ?").get(id);
     if (!row) throw new WorkflowError("NOT_FOUND", "Cycle not found.", 404);
     return this.serializeCycle(row);
+  }
+
+  serializeFeatureFlag(row) {
+    return { key: row.flag_key, enabled: Boolean(row.enabled), updatedAt: row.updated_at, updatedBy: row.updated_by };
   }
 
   serializeIntakeDraft(row) {
@@ -577,6 +586,23 @@ export class SqliteLabsStorage {
     return rows.map(row => this.serializeProject(row));
   }
   appendAudit(actorId, action, entityType, entityId, before, after) { this.audit(actorId, action, entityType, entityId, before, after); }
+
+  listFeatureFlags() {
+    const rows = this.db.prepare("SELECT flag_key, enabled, updated_at, updated_by FROM feature_flags ORDER BY flag_key").all();
+    const stored = new Map(rows.map(row => [row.flag_key, this.serializeFeatureFlag(row)]));
+    return Object.entries(featureFlagDefaults).map(([key, enabled]) => stored.get(key) || { key, enabled, updatedAt: null, updatedBy: null });
+  }
+
+  getFeatureFlag(key) {
+    return this.listFeatureFlags().find(flag => flag.key === key) || null;
+  }
+
+  upsertFeatureFlag(flag) {
+    this.db.prepare(`INSERT INTO feature_flags (flag_key, enabled, updated_at, updated_by)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(flag_key) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+      .run(flag.key, flag.enabled ? 1 : 0, flag.updatedAt, flag.updatedBy);
+  }
 
   transaction(work) {
     this.db.exec("BEGIN");

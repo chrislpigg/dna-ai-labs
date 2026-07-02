@@ -251,6 +251,27 @@ test("selection cannot exceed the cycle's approved capacity", () => {
   } finally { dispose(); }
 });
 
+test("feature flags are admin-controlled and enforced by protected workflow features", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    const submitter = store.actor("submitter-1");
+    const project = store.createIntake(submitter, validIntake);
+    assert.equal(store.listFeatureFlags(admin).find(flag => flag.key === "intake_resubmission").enabled, true);
+    expectWorkflowError(() => store.listFeatureFlags(store.actor("lab-lead")), "FORBIDDEN");
+    expectWorkflowError(() => store.setFeatureFlag(store.actor("lab-lead"), "intake_resubmission", { enabled: false }), "FORBIDDEN");
+    expectWorkflowError(() => store.setFeatureFlag(admin, "unknown_flag", { enabled: false }), "UNKNOWN_FEATURE_FLAG");
+
+    const disabled = store.setFeatureFlag(admin, "intake_resubmission", { enabled: false });
+    assert.equal(disabled.enabled, false);
+    expectWorkflowError(() => store.resubmitIntake(submitter, project.id, { ...validIntake, target: "45 minutes" }), "FEATURE_DISABLED");
+    const enabled = store.setFeatureFlag(admin, "intake_resubmission", { enabled: true });
+    assert.equal(enabled.enabled, true);
+    assert.equal(store.resubmitIntake(submitter, project.id, { ...validIntake, target: "45 minutes" }).revision.revisionNumber, 2);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "feature_flag_updated" && event.entityId === "intake_resubmission"), true);
+  } finally { dispose(); }
+});
+
 test("only Lab leadership can select and start an incubation", () => {
   const { store, dispose } = createStore();
   try {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assertStoragePort } from "./storage-port.mjs";
 import { retentionExpired, retentionUntil } from "./retention-policy.mjs";
+import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -162,6 +163,31 @@ export class WorkflowService {
     return this.storage.listIntakeDrafts(actor.id);
   }
   verifyAuditIntegrity() { return this.storage.verifyAuditIntegrity(); }
+
+  listFeatureFlags(actor) {
+    requireRole(actor, [roles.ADMIN]);
+    return this.storage.listFeatureFlags();
+  }
+
+  requireFeatureEnabled(key) {
+    const flag = this.storage.getFeatureFlag(key) || { enabled: featureFlagDefaults[key] };
+    if (!flag.enabled) throw new WorkflowError("FEATURE_DISABLED", "This feature is not enabled for the tenant.", 403, { featureFlag: key });
+  }
+
+  setFeatureFlag(actor, key, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const flagKey = String(key ?? "").trim();
+    if (!knownFeatureFlag(flagKey)) throw new WorkflowError("UNKNOWN_FEATURE_FLAG", "Feature flag is not recognized.", 404);
+    if (typeof input.enabled !== "boolean") throw new WorkflowError("INVALID_FEATURE_FLAG", "Feature flag enabled value must be boolean.", 422);
+    const existing = this.storage.getFeatureFlag(flagKey) || { key: flagKey, enabled: featureFlagDefaults[flagKey], updatedAt: null, updatedBy: null };
+    const timestamp = now();
+    const next = { key: flagKey, enabled: input.enabled, updatedAt: timestamp, updatedBy: actor.id };
+    this.storage.transaction(() => {
+      this.storage.upsertFeatureFlag(next);
+      this.storage.appendAudit(actor.id, "feature_flag_updated", "feature_flag", flagKey, { enabled: existing.enabled }, { enabled: next.enabled });
+    });
+    return this.storage.getFeatureFlag(flagKey);
+  }
 
   createCycle(actor, input = {}) {
     requireRole(actor, [roles.ADMIN]);
@@ -366,6 +392,7 @@ export class WorkflowService {
   }
 
   resubmitIntake(actor, projectId, input = {}) {
+    this.requireFeatureEnabled("intake_resubmission");
     requireRole(actor, intakeOwnerRoles);
     const project = this.project(projectId);
     if (project.createdBy !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the intake owner can resubmit this intake.", 403);

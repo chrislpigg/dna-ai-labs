@@ -208,4 +208,13 @@ Started: 2026-06-20
 - Files changed: `migrations/013_project_capacity_units.sql`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: enforce cycle capacity at the server-owned selection transition; UI capacity indicators are useful context, but the transition must be the source of truth.
 
+## 2026-07-02 — US-025 Add feature-flag service
+
+- Added tenant-scoped feature flags with explicit defaults for intake resubmission and unfinished integration surfaces. Stored overrides merge with defaults in SQLite demo storage and PostgreSQL reads.
+- Added administrator-only feature-flag list/update API methods, transaction-backed PostgreSQL writes, and durable `feature_flag_updated` audit events with before/after enabled values.
+- Enforced the `intake_resubmission` flag server-side before the protected resubmission workflow runs; disabled behavior returns a structured `FEATURE_DISABLED` error.
+- Verification: `npm test` (75 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/014_feature_flags.sql`, `package.json`, `server.mjs`, `src/feature-flags.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: use feature flags as server-enforced transition guards, not UI hints; defaults should be explicit in code and tenant overrides should remain auditable metadata.
+
 ---

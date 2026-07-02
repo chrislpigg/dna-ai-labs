@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { missingGates, requiredApproverRoles, requiredReviewTypes, WorkflowError } from "./workflow-policy.mjs";
+import { featureFlagDefaults } from "./feature-flags.mjs";
 
 function requiredText(value, label) {
   const result = typeof value === "string" ? value.trim() : "";
@@ -97,6 +98,21 @@ export class PostgresReadAdapter {
     const row = asRows(result)[0];
     if (!row) throw new WorkflowError("NOT_FOUND", "Cycle not found.", 404);
     return this.serializeCycle(row);
+  }
+
+  async listFeatureFlags() {
+    const result = await this.query(
+      "SELECT flag_key, enabled, updated_at, updated_by FROM feature_flags WHERE organization_id = $1 ORDER BY flag_key",
+      [this.organizationId]
+    );
+    const stored = new Map(asRows(result).map(row => [row.flag_key, {
+      key: row.flag_key, enabled: Boolean(row.enabled), updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by
+    }]));
+    return Object.entries(featureFlagDefaults).map(([key, enabled]) => stored.get(key) || { key, enabled, updatedAt: null, updatedBy: null });
+  }
+
+  async getFeatureFlag(key) {
+    return (await this.listFeatureFlags()).find(flag => flag.key === key) || null;
   }
 
   serializeIntakeDraft(row) {

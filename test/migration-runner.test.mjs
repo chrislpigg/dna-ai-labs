@@ -20,10 +20,20 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("feature flag migration stores tenant-scoped pilot controls", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "014_feature_flags");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS feature_flags/);
+  assert.match(migration.sql, /organization_id TEXT NOT NULL REFERENCES organizations\(id\)/);
+  assert.match(migration.sql, /PRIMARY KEY \(organization_id, flag_key\)/);
+  assert.match(migration.sql, /feature_flags_updated_by_organization_fk FOREIGN KEY \(updated_by, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.match(migration.sql, /feature_flags_organization_enabled_idx/);
 });
 
 test("project capacity migration supports cycle selection limits", () => {

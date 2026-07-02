@@ -96,6 +96,7 @@ async function api(req, res, url) {
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
   if (req.method === "GET" && path === "/api/v1/cycles") return respond(res, 200, { cycles: await workflow.listCycles(requestActor) });
   if (req.method === "POST" && path === "/api/v1/cycles") return respond(res, 201, { cycle: await workflow.createCycle(requestActor, await body(req)) });
+  if (req.method === "GET" && path === "/api/v1/feature-flags") return respond(res, 200, { flags: await workflow.listFeatureFlags(requestActor) });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: await workflow.listProjects() });
   if (req.method === "GET" && path === "/api/v1/audit-events") {
     requireRole(requestActor, [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.ADMIN]);
@@ -114,6 +115,8 @@ async function api(req, res, url) {
   if (req.method === "POST" && match) return respond(res, 201, { project: await workflow.submitIntakeDraft(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/cycles\/([^/]+)$/);
   if (req.method === "PATCH" && match) return respond(res, 200, { cycle: await workflow.updateCycle(requestActor, match[1], await body(req)) });
+  match = path.match(/^\/api\/v1\/feature-flags\/([a-z_]+)$/);
+  if (req.method === "PATCH" && match) return respond(res, 200, { flag: await workflow.setFeatureFlag(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/intakes\/([^/]+)\/triage-comments$/);
   if (req.method === "GET" && match) return respond(res, 200, { comments: await workflow.listTriageComments(requestActor, match[1]) });
   if (req.method === "POST" && match) return respond(res, 201, { comments: await workflow.addTriageComment(requestActor, match[1], await body(req)) });

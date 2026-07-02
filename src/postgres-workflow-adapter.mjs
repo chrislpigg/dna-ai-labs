@@ -4,6 +4,7 @@ import { PostgresReadAdapter } from "./postgres-read-adapter.mjs";
 import { deletionReasons } from "./workflow-service.mjs";
 import { retentionClassification, retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
+import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -183,6 +184,14 @@ class PostgresTransaction {
       WHERE organization_id = $1 AND id = $2`, [
       this.organizationId, id, cycle.name, cycle.theme, cycle.startsOn, cycle.endsOn,
       cycle.capacityUnits, JSON.stringify(cycle.steeringGroupIds), cycle.status
+    ]);
+  }
+
+  async upsertFeatureFlag(flag) {
+    await this.query(`INSERT INTO feature_flags (organization_id, flag_key, enabled, updated_at, updated_by)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (organization_id, flag_key) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`, [
+      this.organizationId, flag.key, flag.enabled, flag.updatedAt, flag.updatedBy
     ]);
   }
 
@@ -436,6 +445,31 @@ export class PostgresWorkflowAdapter {
   health() { return this.reads.health(); }
   close() { return this.reads.close(); }
 
+  async listFeatureFlags(actor) {
+    requireRole(actor, [roles.ADMIN]);
+    return this.reads.listFeatureFlags();
+  }
+
+  async requireFeatureEnabled(key) {
+    const flag = await this.reads.getFeatureFlag(key);
+    if (!(flag || { enabled: featureFlagDefaults[key] }).enabled) throw new WorkflowError("FEATURE_DISABLED", "This feature is not enabled for the tenant.", 403, { featureFlag: key });
+  }
+
+  async setFeatureFlag(actor, key, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const flagKey = String(key ?? "").trim();
+    if (!knownFeatureFlag(flagKey)) throw new WorkflowError("UNKNOWN_FEATURE_FLAG", "Feature flag is not recognized.", 404);
+    if (typeof input.enabled !== "boolean") throw new WorkflowError("INVALID_FEATURE_FLAG", "Feature flag enabled value must be boolean.", 422);
+    const existing = await this.reads.getFeatureFlag(flagKey) || { key: flagKey, enabled: featureFlagDefaults[flagKey], updatedAt: null, updatedBy: null };
+    const timestamp = now();
+    const next = { key: flagKey, enabled: input.enabled, updatedAt: timestamp, updatedBy: actor.id };
+    await this.transaction(async tx => {
+      await tx.upsertFeatureFlag(next);
+      await tx.appendAudit(actor.id, "feature_flag_updated", "feature_flag", flagKey, { enabled: existing.enabled }, { enabled: next.enabled });
+    });
+    return this.reads.getFeatureFlag(flagKey);
+  }
+
   async createCycle(actor, input = {}) {
     requireRole(actor, [roles.ADMIN]);
     const cycle = { id: randomUUID(), ...normalizeCycleInput(input) };
@@ -604,6 +638,7 @@ export class PostgresWorkflowAdapter {
   }
 
   async resubmitIntake(actor, projectId, input = {}) {
+    await this.requireFeatureEnabled("intake_resubmission");
     requireRole(actor, intakeOwnerRoles);
     const project = await this.project(projectId);
     if (project.createdBy !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the intake owner can resubmit this intake.", 403);
