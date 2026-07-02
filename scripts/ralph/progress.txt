@@ -374,3 +374,12 @@ Started: 2026-06-20
 - Verification: `npm test` (122 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `migrations/023_notification_worker_state.sql`, `scripts/notifications-worker.mjs`, `src/labs-store.mjs`, `src/notification-worker.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `package.json`, `test/migration-runner.test.mjs`, `test/notification-worker.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: retry workers need stable idempotency before the first send attempt; if a send succeeds but local state update fails, a retry can be safe only when the provider sees the same key.
+
+## 2026-07-02 — US-043 Add notification delivery adapters
+
+- Added feature-gated email and chat notification sender interfaces that accept approved provider callbacks and fail closed when disabled or unconfigured.
+- Added minimal templates for intake submission, adoption acknowledgement, review updates, decision requests, handoff acceptance, follow-up scheduling, and unknown workflow events using controlled metadata only.
+- Added a channel router that sends only through enabled channels and preserves the worker idempotency key for provider duplicate protection.
+- Verification: `npm test` (126 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `src/notification-delivery-adapter.mjs`, `test/notification-delivery-adapter.test.mjs`, `package.json`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: notification templates should be derived from event metadata, not from project narrative fields or provider payloads; delivery adapters should make the absent-provider path explicit instead of silently dropping work.
