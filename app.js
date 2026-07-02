@@ -21,6 +21,26 @@ function escapeHtml(value = "") {
 function stageClass(stage) { return String(stage).replaceAll(" ", "-"); }
 function getProject(id) { return projects.find(project => project.id === id); }
 function formatDate(value) { return value ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${value}T12:00:00`)) : "Not set"; }
+function directoryAssignment(project, key) { return project.directoryAssignments?.[key] || null; }
+function assignmentHolder(project, key) {
+  return key === "metricOwner" ? project.metricOwner : project[key];
+}
+function assignmentSummary(project, key, fallback = "Not assigned") {
+  const assignment = directoryAssignment(project, key);
+  const holder = assignmentHolder(project, key);
+  if (!assignment && !holder) return fallback;
+  const name = assignment?.displayName || holder?.name || holder?.id || assignment?.id;
+  const organization = assignment?.organization ? ` · ${assignment.organization}` : "";
+  const manager = assignment?.managerId ? ` · manager ${assignment.managerId}` : "";
+  const status = assignment ? ` · ${assignment.active ? "active" : "inactive"}` : " · directory unverified";
+  return `${name}${organization}${manager}${status}`;
+}
+function hasActiveDirectoryAssignment(project, key) {
+  return directoryAssignment(project, key)?.active === true;
+}
+function directoryWarningList(project) {
+  return (project.directoryWarnings || []).map(warning => `<li><b>${escapeHtml(warning.code)}</b> · ${escapeHtml(warning.assignment)} · ${escapeHtml(warning.userId)}</li>`).join("");
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -348,7 +368,7 @@ async function saveCycle(event) {
 function renderStats() {
   const candidates = projects.filter(project => candidateStages.has(project.stage));
   const active = projects.filter(project => activeStages.has(project.stage));
-  const acknowledged = active.filter(project => project.receivingOwner).length;
+  const acknowledged = active.filter(project => hasActiveDirectoryAssignment(project, "receivingOwner")).length;
   const potentialReach = active.reduce((total, project) => total + (Number(project.potentialReach) || 0), 0);
   document.querySelector("#active-count").textContent = String(active.length).padStart(2, "0");
   document.querySelector("#owner-count").innerHTML = `${String(acknowledged).padStart(2, "0")}<span>/${String(active.length).padStart(2, "0")}</span>`;
@@ -395,13 +415,14 @@ function openProject(id) {
   const canApprove = pending && pending.requiredApprovers.includes(currentUser?.role) && pending.requestedBy !== currentUser?.id && !ownApproval;
   const missingApprovals = pending?.requiredApprovers.filter(role => !approvedRoles.has(role)) || [];
   const canFinalize = isLabLead && pending && missingApprovals.length === 0 && pending.missingGates.length === 0;
-  const canAcceptHandoff = pending?.outcome === "Transfer" && currentUser?.role === "receiving-owner" && project.receivingOwner?.id === currentUser.id && !project.handoff;
-  const canAcknowledgeAdoption = ["Submitted", "Triage"].includes(project.stage) && currentUser?.role === "receiving-owner" && project.receivingOwner?.id === currentUser.id && !project.adoptionAcknowledged;
+  const canAcceptHandoff = pending?.outcome === "Transfer" && currentUser?.role === "receiving-owner" && project.receivingOwner?.id === currentUser.id && hasActiveDirectoryAssignment(project, "receivingOwner") && !project.handoff;
+  const canAcknowledgeAdoption = ["Submitted", "Triage"].includes(project.stage) && currentUser?.role === "receiving-owner" && project.receivingOwner?.id === currentUser.id && hasActiveDirectoryAssignment(project, "receivingOwner") && !project.adoptionAcknowledged;
   const canAddEvidence = ["Incubating", "Decision pending"].includes(project.stage) && (["lab-lead", "admin"].includes(currentUser?.role) || (currentUser?.role === "project-lead" && project.projectLead.id === currentUser.id));
   const canReview = ["Incubating", "Decision pending"].includes(project.stage) && ["platform-reviewer", "lab-lead", "admin"].includes(currentUser?.role);
   const evidenceSummary = project.evidence.length ? project.evidence.slice(0, 3).map(entry => `<li><b>${escapeHtml(entry.evidenceType.replaceAll("_", " "))}</b> · ${escapeHtml(entry.result)} <span>${escapeHtml(entry.confidence)} confidence, n=${escapeHtml(entry.sampleSize)}</span></li>`).join("") : "<li>No pilot evidence recorded yet.</li>";
   const reviewSummary = project.reviewRequirements.map(type => project.reviews.find(review => review.reviewType === type) || { reviewType: type, status: "incomplete" });
   const decisionHistory = project.decisionHistory.length ? project.decisionHistory.map(decision => `<li><b>${escapeHtml(decision.outcome)}</b> · ${escapeHtml(decision.status)} <span>${escapeHtml(decision.rationale)}</span></li>`).join("") : "<li>No decisions requested yet.</li>";
+  const directoryWarnings = directoryWarningList(project);
   document.querySelector("#dialog-content").innerHTML = `
     <p class="eyebrow dialog-stage">${escapeHtml(project.originTeam)} · ${escapeHtml(project.stage)}</p>
     <h2 id="dialog-title" class="dialog-title">${escapeHtml(project.title)}</h2>
@@ -411,11 +432,15 @@ function openProject(id) {
       <div><dt>Success metric</dt><dd>${escapeHtml(project.metric)}</dd></div>
       <div><dt>Baseline → target</dt><dd>${escapeHtml(project.baseline)} → ${escapeHtml(project.target)}</dd></div>
       <div><dt>Metric source</dt><dd>${escapeHtml(project.metricSource)}</dd></div>
+      <div><dt>Metric owner</dt><dd>${escapeHtml(assignmentSummary(project, "metricOwner"))}</dd></div>
       <div><dt>Potential reach</dt><dd>${escapeHtml(project.potentialReach)} teams (hypothesis)</dd></div>
-      <div><dt>Receiving owner</dt><dd>${escapeHtml(project.receivingOwner?.name || "Not assigned")} · ${project.adoptionAcknowledged ? "acknowledged" : "pending acknowledgement"}</dd></div>
+      <div><dt>Sponsor</dt><dd>${escapeHtml(assignmentSummary(project, "sponsor"))}</dd></div>
+      <div><dt>Receiving owner</dt><dd>${escapeHtml(assignmentSummary(project, "receivingOwner"))} · ${project.adoptionAcknowledged ? "acknowledged" : "pending acknowledgement"}</dd></div>
+      <div><dt>Project lead</dt><dd>${escapeHtml(assignmentSummary(project, "projectLead"))}</dd></div>
       <div><dt>Risk classification</dt><dd>${escapeHtml(project.riskClassification)}</dd></div>
       <div><dt>Transfer target</dt><dd>${formatDate(project.transferDate)}</dd></div>
     </dl>
+    ${directoryWarnings ? `<section class="directory-warnings" aria-label="Directory assignment warnings"><p class="eyebrow">Directory warnings</p><ul>${directoryWarnings}</ul></section>` : ""}
     <section class="evidence-summary"><p class="eyebrow">Pilot evidence</p><ul>${evidenceSummary}</ul></section>
     <section class="review-summary"><p class="eyebrow">Required reviews</p><ul>${reviewSummary.map(review => `<li><b>${escapeHtml(review.reviewType.replaceAll("_", " "))}</b><span class="review-${escapeHtml(review.status)}">${escapeHtml(review.status)}</span></li>`).join("")}</ul></section>
     <section class="decision-history"><p class="eyebrow">Decision history</p><ul>${decisionHistory}</ul></section>

@@ -3,6 +3,7 @@ import { assertStoragePort } from "./storage-port.mjs";
 import { retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPersonSync } from "./directory-adapter.mjs";
+import { enrichProjectDirectoryContextSync } from "./directory-context.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -155,8 +156,8 @@ export class WorkflowService {
   actor(id) { return this.storage.getActor(id); }
   users() { return this.storage.listUsers(); }
   listCycles() { return this.storage.listCycles(); }
-  project(id) { return this.storage.getProject(id); }
-  listProjects() { return this.storage.listProjects(); }
+  project(id) { return enrichProjectDirectoryContextSync(this.storage.getProject(id), this.directory); }
+  listProjects() { return this.storage.listProjects().map(project => enrichProjectDirectoryContextSync(project, this.directory)); }
   intakeDraft(actor, id) {
     const draft = this.storage.getIntakeDraft(id);
     this.requireDraftAccess(actor, draft);
@@ -541,6 +542,7 @@ export class WorkflowService {
     const project = this.project(id);
     if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Only submitted or triaged projects can be selected.", 409);
     if (!project.receivingOwner) throw new WorkflowError("MISSING_RECEIVING_OWNER", "Selection requires a named receiving owner.", 409);
+    if (project.directoryAssignments?.receivingOwner?.active !== true) throw new WorkflowError("RECEIVING_OWNER_INACTIVE", "Selection requires an active directory-verified receiving owner.", 409, { userId: project.receivingOwner.id });
     if (!project.adoptionAcknowledged) throw new WorkflowError("MISSING_ADOPTION_ACK", "Selection requires acknowledgement from the named receiving owner.", 409);
     const cycle = this.storage.getCycle(project.cycleId);
     const usedCapacity = this.storage.cycleCapacityUsage(project.cycleId, [...cycleCapacityStages]);

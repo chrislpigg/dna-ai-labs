@@ -102,6 +102,29 @@ test("directory people search is role-gated and exposes only approved person met
   } finally { dispose(); }
 });
 
+test("project reads include directory organization context and warn on stale or inactive assignments", () => {
+  const { store, dispose } = createStore({
+    directoryAdapter: testDirectory({
+      "receiving-owner": { active: false, organization: "Customer Operations", managerId: "manager-1", verifiedAt: "2026-01-01T00:00:00.000Z" }
+    })
+  });
+  try {
+    const project = store.project("accessibility-agent");
+    assert.equal(project.receivingOwner.directory.organization, "Customer Operations");
+    assert.equal(project.receivingOwner.directory.managerId, "manager-1");
+    assert.equal(project.receivingOwner.directory.active, false);
+    assert.equal(project.directoryAssignments.receivingOwner.stale, true);
+    assert.equal(Object.hasOwn(project.receivingOwner.directory, "email"), false);
+    assert.equal(Object.hasOwn(project.receivingOwner.directory, "employeeNumber"), false);
+    assert.deepEqual(
+      project.directoryWarnings.filter(warning => warning.userId === "receiving-owner").map(warning => warning.code).sort(),
+      ["DIRECTORY_CONTEXT_STALE", "DIRECTORY_PERSON_INACTIVE"]
+    );
+    store.acknowledgeAdoption(store.actor("receiving-owner"), project.id);
+    expectWorkflowError(() => store.selectProject(store.actor("lab-lead"), project.id), "RECEIVING_OWNER_INACTIVE");
+  } finally { dispose(); }
+});
+
 test("intake drafts can be saved incomplete and are visible only to owners and draft collaborators", () => {
   const { store, dispose } = createStore();
   try {

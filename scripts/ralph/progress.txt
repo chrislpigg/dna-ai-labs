@@ -254,4 +254,13 @@ Started: 2026-06-20
 - Files changed: `server.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `index.html`, `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: keep directory search behind the same workflow authorization boundary as draft intake work, and return only normalized people metadata needed for assignment decisions.
 
+## 2026-07-02 — US-030 Display directory organization context
+
+- Added read-time directory assignment enrichment for metric owner, sponsor, receiving owner, and project lead without persisting raw directory payloads into project records.
+- Project responses now include allowed organization, manager, active status, verification time, and stale state, plus structured warning codes for inactive, stale, or unverifiable assignments.
+- Updated the project brief to show directory organization/manager context and warning codes. Inactive receiving owners are no longer counted as valid owner coverage, cannot acknowledge handoff actions from the UI, and cannot pass the server-owned selection transition.
+- Verification: `npm test` (87 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `src/directory-context.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `app.js`, `styles.css`, `package.json`, `test/intake-draft-ui.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: treat directory context as volatile read-time metadata; stale or inactive assignments should warn and block dependent lifecycle transitions instead of being treated as durable owner truth.
+
 ---

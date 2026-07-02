@@ -55,3 +55,12 @@ test("intake person fields use directory-backed search instead of hard-coded use
   assert.match(app, /No active people matched that search/);
   assert.match(app, /People search failed:/);
 });
+
+test("project brief renders directory organization context and warnings", () => {
+  assert.match(app, /function assignmentSummary\(project, key, fallback = "Not assigned"\)/);
+  assert.match(app, /function hasActiveDirectoryAssignment\(project, key\)/);
+  assert.match(app, /directoryWarnings \|\| \[\]\)\.map\(warning => `<li><b>\$\{escapeHtml\(warning\.code\)\}<\/b>/);
+  assert.match(app, /Metric owner<\/dt><dd>\$\{escapeHtml\(assignmentSummary\(project, "metricOwner"\)\)\}/);
+  assert.match(app, /Receiving owner<\/dt><dd>\$\{escapeHtml\(assignmentSummary\(project, "receivingOwner"\)\)\}/);
+  assert.match(app, /Directory warnings/);
+});

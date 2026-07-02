@@ -6,6 +6,7 @@ import { retentionClassification, retentionExpired, retentionUntil } from "./ret
 import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPerson } from "./directory-adapter.mjs";
+import { enrichProjectDirectoryContext } from "./directory-context.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -427,9 +428,11 @@ export class PostgresWorkflowAdapter {
 
   getActorBySubject(subject, role) { return this.reads.getActorBySubject(subject, role); }
   listCycles() { return this.reads.listCycles(); }
-  listProjects() { return this.reads.listProjects(); }
-  project(id) { return this.reads.getProject(id); }
-  getProjectIncludingDeleted(id) { return this.reads.getProjectIncludingDeleted(id); }
+  async listProjects() {
+    return Promise.all((await this.reads.listProjects()).map(project => enrichProjectDirectoryContext(project, this.directory)));
+  }
+  async project(id) { return enrichProjectDirectoryContext(await this.reads.getProject(id), this.directory); }
+  async getProjectIncludingDeleted(id) { return enrichProjectDirectoryContext(await this.reads.getProjectIncludingDeleted(id), this.directory); }
   async intakeDraft(actor, id) {
     const draft = await this.reads.getIntakeDraft(id);
     this.requireDraftAccess(actor, draft);
@@ -790,6 +793,7 @@ export class PostgresWorkflowAdapter {
     const project = await this.project(id);
     if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Only submitted or triaged projects can be selected.", 409);
     if (!project.receivingOwner) throw new WorkflowError("MISSING_RECEIVING_OWNER", "Selection requires a named receiving owner.", 409);
+    if (project.directoryAssignments?.receivingOwner?.active !== true) throw new WorkflowError("RECEIVING_OWNER_INACTIVE", "Selection requires an active directory-verified receiving owner.", 409, { userId: project.receivingOwner.id });
     if (!project.adoptionAcknowledged) throw new WorkflowError("MISSING_ADOPTION_ACK", "Selection requires acknowledgement from the named receiving owner.", 409);
     const cycle = await this.reads.getCycle(project.cycleId);
     const usedCapacity = await this.transaction(tx => tx.cycleCapacityUsage(project.cycleId, [...cycleCapacityStages]));
