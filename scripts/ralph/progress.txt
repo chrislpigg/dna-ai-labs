@@ -244,4 +244,14 @@ Started: 2026-06-20
 - Files changed: `src/directory-adapter.mjs`, `src/labs-store.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: perform directory validation at the workflow boundary and persist only stable user references/display metadata already allowed by the product spec.
 
+## 2026-07-02 — US-029 Build directory-backed people picker
+
+- Added a role-gated directory people search API for draft-capable actors and sanitized responses to active person id, display name, organization, manager id, and active state only.
+- Replaced hard-coded intake person dropdown options with accessible search-backed pickers for metric owner, sponsor, receiving owner, and project lead. The controls announce loading, empty-result, and error states through the intake status region.
+- Added workflow and static UI tests proving the search contract is authorized, excludes inactive people, does not expose email or employee numbers, and removes hard-coded intake owner choices.
+- Verification: `npm test` (85 passing) and `npm run check` passed. In-app browser verification was blocked because the Browser plugin reported no available browser backends (`agent.browsers.list()` returned `[]`). A local demo-mode HTTP/API verification confirmed picker markup was served, submitter search returned sanitized active-person metadata, and `receiving-owner` received `403 FORBIDDEN`.
+- Vercel preview: `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `server.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `index.html`, `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: keep directory search behind the same workflow authorization boundary as draft intake work, and return only normalized people metadata needed for assignment decisions.
+
 ---

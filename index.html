@@ -108,11 +108,12 @@
               <label>Metric source<input required name="metricSource" placeholder="e.g. Release tracker" /></label>
             </div>
             <div class="form-section"><p class="form-number">03</p><div><h3>Make it adoptable</h3><p>These are the two gates to selection.</p></div></div>
+            <p id="people-picker-status" class="form-status" role="status" aria-live="polite"></p>
             <div class="form-grid">
-              <label>Metric owner<select required name="metricOwnerId" required><option value="">Select an owner</option><option value="accessibility-lead">Avery Accessibility</option><option value="ube-lead">Uma UBE</option><option value="lab-lead">Morgan Lab Lead</option></select></label>
-              <label>Sponsor<select required name="sponsorId" required><option value="">Select a sponsor</option><option value="executive-sponsor">Jordan Executive Sponsor</option></select></label>
-              <label>Proposed long-term owner<select required name="receivingOwnerId" required><option value="">Select an owner</option><option value="receiving-owner">Riley Receiving Owner</option></select></label>
-              <label>Project lead<select required name="projectLeadId" required><option value="">Select a lead</option><option value="accessibility-lead">Avery Accessibility</option><option value="ube-lead">Uma UBE</option></select></label>
+              <label>Metric owner<input class="person-search" data-person-target="metricOwnerId" type="search" autocomplete="off" placeholder="Search active people" aria-describedby="people-picker-status" /><select required name="metricOwnerId" data-person-select><option value="">Search and select an active person</option></select></label>
+              <label>Sponsor<input class="person-search" data-person-target="sponsorId" type="search" autocomplete="off" placeholder="Search active people" aria-describedby="people-picker-status" /><select required name="sponsorId" data-person-select><option value="">Search and select an active person</option></select></label>
+              <label>Proposed long-term owner<input class="person-search" data-person-target="receivingOwnerId" type="search" autocomplete="off" placeholder="Search active people" aria-describedby="people-picker-status" /><select required name="receivingOwnerId" data-person-select><option value="">Search and select an active person</option></select></label>
+              <label>Project lead<input class="person-search" data-person-target="projectLeadId" type="search" autocomplete="off" placeholder="Search active people" aria-describedby="people-picker-status" /><select required name="projectLeadId" data-person-select><option value="">Search and select an active person</option></select></label>
               <label>Data classification<select required name="risk"><option value="Internal">Internal</option><option value="Confidential business">Confidential business</option><option value="Restricted metadata">Restricted metadata</option></select></label>
               <label>Transfer target<input required name="transfer" type="date" /></label>
             </div>

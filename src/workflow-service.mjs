@@ -168,6 +168,14 @@ export class WorkflowService {
   }
   verifyAuditIntegrity() { return this.storage.verifyAuditIntegrity(); }
 
+  async searchDirectoryPeople(actor, query) {
+    requireRole(actor, draftAllowedRoles);
+    const people = await this.directory.searchPeople(query);
+    return people
+      .filter(person => person.active)
+      .map(person => ({ id: person.id, displayName: person.displayName, organization: person.organization, managerId: person.managerId, active: person.active }));
+  }
+
   listFeatureFlags(actor) {
     requireRole(actor, [roles.ADMIN]);
     return this.storage.listFeatureFlags();

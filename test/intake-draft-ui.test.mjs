@@ -5,6 +5,12 @@ import { readFile } from "node:fs/promises";
 const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const app = await readFile(new URL("../app.js", import.meta.url), "utf8");
 
+function selectMarkup(name) {
+  const match = index.match(new RegExp(`<select required name="${name}" data-person-select>[\\s\\S]*?<\\/select>`));
+  assert.ok(match, `missing ${name} picker select`);
+  return match[0];
+}
+
 test("intake page exposes accessible save and resume draft controls", () => {
   assert.match(index, /id="draft-panel"[\s\S]*aria-labelledby="draft-panel-title"/);
   assert.match(index, /id="draft-list"[\s\S]*aria-live="polite"/);
@@ -37,4 +43,15 @@ test("cycle administration UI is accessible and hidden from non-admin roles", ()
   assert.match(app, /document\.querySelector\("#cycle-admin-nav"\)\.hidden = !canAdminCycles\(\)/);
   assert.match(app, /api\("\/api\/v1\/cycles"\)/);
   assert.match(app, /api\(path, \{ method: editingCycleId \? "PATCH" : "POST"/);
+});
+
+test("intake person fields use directory-backed search instead of hard-coded user options", () => {
+  assert.match(index, /id="people-picker-status"[\s\S]*role="status"[\s\S]*aria-live="polite"/);
+  assert.match(index, /class="person-search"[\s\S]*data-person-target="metricOwnerId"/);
+  assert.match(index, /select required name="sponsorId" data-person-select/);
+  assert.doesNotMatch(selectMarkup("sponsorId"), /<option value="executive-sponsor">Jordan Executive Sponsor<\/option>/);
+  assert.doesNotMatch(selectMarkup("receivingOwnerId"), /<option value="receiving-owner">Riley Receiving Owner<\/option>/);
+  assert.match(app, /api\(`\/api\/v1\/directory\/people\?q=\$\{encodeURIComponent\(query\)\}`\)/);
+  assert.match(app, /No active people matched that search/);
+  assert.match(app, /People search failed:/);
 });

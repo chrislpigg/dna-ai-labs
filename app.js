@@ -35,6 +35,53 @@ async function api(path, options = {}) {
 function canUseDrafts() { return draftRoles.has(currentUser?.role); }
 function canAdminCycles() { return currentUser?.role === "admin"; }
 
+function setPeopleStatus(message = "", tone = "info") {
+  const status = document.querySelector("#people-picker-status");
+  status.textContent = message;
+  status.className = `form-status ${tone === "error" ? "is-error" : ""}`.trim();
+}
+
+function personLabel(person) {
+  return `${person.displayName} · ${person.organization}`;
+}
+
+function ensurePersonOption(fieldName, id, label = id) {
+  const select = document.querySelector(`select[name="${CSS.escape(fieldName)}"]`);
+  if (!select || !id) return;
+  if (![...select.options].some(option => option.value === id)) {
+    select.add(new Option(label, id));
+  }
+  select.value = id;
+}
+
+function renderPeopleOptions(fieldName, people = []) {
+  const select = document.querySelector(`select[name="${CSS.escape(fieldName)}"]`);
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = `<option value="">${people.length ? "Select an active person" : "No active matches"}</option>`;
+  for (const person of people) select.add(new Option(personLabel(person), person.id));
+  if (current && people.some(person => person.id === current)) select.value = current;
+}
+
+async function searchPeopleForField(input) {
+  const fieldName = input.dataset.personTarget;
+  const query = input.value.trim();
+  if (query.length < 2) {
+    renderPeopleOptions(fieldName, []);
+    setPeopleStatus("Enter at least two characters to search active people.");
+    return;
+  }
+  setPeopleStatus("Searching active people...");
+  try {
+    const { people } = await api(`/api/v1/directory/people?q=${encodeURIComponent(query)}`);
+    renderPeopleOptions(fieldName, people);
+    setPeopleStatus(people.length ? `${people.length} active people found.` : "No active people matched that search.");
+  } catch (error) {
+    renderPeopleOptions(fieldName, []);
+    setPeopleStatus(`People search failed: ${error.message}`, "error");
+  }
+}
+
 function setDraftStatus(message = "", tone = "info") {
   const status = document.querySelector("#draft-status");
   status.textContent = message;
@@ -88,6 +135,7 @@ function fillIntakeForm(content = {}) {
     const field = form.elements.namedItem(name);
     if (field) field.value = value ?? "";
   }
+  for (const name of ["metricOwnerId", "sponsorId", "receivingOwnerId", "projectLeadId"]) ensurePersonOption(name, content[name]);
   form.elements.namedItem("adoption").checked = Boolean(content.adoptionGate);
   form.elements.namedItem("evidence").checked = Boolean(content.evidenceGate);
 }
@@ -533,6 +581,12 @@ document.addEventListener("click", event => {
   if (event.target.closest("[data-accept-handoff]")) acceptHandoff();
   if (event.target.closest("[data-finalize-decision]")) finalizeDecision();
   if (event.target.closest(".dialog-close")) document.querySelector("#project-dialog").close();
+});
+
+document.addEventListener("input", event => {
+  if (!event.target.matches(".person-search")) return;
+  window.clearTimeout(event.target._searchTimer);
+  event.target._searchTimer = window.setTimeout(() => searchPeopleForField(event.target), 220);
 });
 
 document.querySelector("#demo-actor").addEventListener("change", async event => {

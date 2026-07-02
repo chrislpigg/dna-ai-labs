@@ -439,6 +439,13 @@ export class PostgresWorkflowAdapter {
     requireRole(actor, draftAllowedRoles);
     return this.reads.listIntakeDrafts(actor.id);
   }
+  async searchDirectoryPeople(actor, query) {
+    requireRole(actor, draftAllowedRoles);
+    const people = await this.directory.searchPeople(query);
+    return people
+      .filter(person => person.active)
+      .map(person => ({ id: person.id, displayName: person.displayName, organization: person.organization, managerId: person.managerId, active: person.active }));
+  }
   requireDraftAccess(actor, draft) {
     requireRole(actor, draftAllowedRoles);
     if (draft.ownerId !== actor.id && !draftCollaboratorIds(draft).includes(actor.id)) {

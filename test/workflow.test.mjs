@@ -38,6 +38,10 @@ const validIntake = {
 };
 
 function testDirectory(overrides = {}) {
+  const people = ["accessibility-lead", "executive-sponsor", "receiving-owner", "inactive-owner"].map(id => ({
+    id, displayName: `Directory ${id}`, organization: "Verified Org", managerId: "admin", active: id !== "inactive-owner",
+    employeeNumber: "not-stored", email: `${id}@example.invalid`, ...(overrides[id] || {})
+  })).filter(person => overrides[person.id] !== null);
   return new DirectoryAdapter({
     lookupPersonSync: id => overrides[id] === null ? null : ({
       id, displayName: `Directory ${id}`, organization: "Verified Org", managerId: "admin", active: true,
@@ -46,7 +50,7 @@ function testDirectory(overrides = {}) {
     lookupPerson: async id => overrides[id] === null ? null : ({
       id, displayName: `Directory ${id}`, organization: "Verified Org", managerId: "admin", active: true, ...(overrides[id] || {})
     }),
-    searchPeople: async () => []
+    searchPeople: async query => people.filter(person => !query || person.id.includes(query) || person.displayName.includes(query))
   });
 }
 
@@ -79,6 +83,22 @@ test("intake owner assignments are validated through the company directory witho
     assert.equal(project.sponsor.id, "executive-sponsor");
     assert.equal(Object.hasOwn(project.sponsor, "email"), false);
     assert.equal(Object.hasOwn(project.sponsor, "employeeNumber"), false);
+  } finally { dispose(); }
+});
+
+test("directory people search is role-gated and exposes only approved person metadata", async () => {
+  const { store, dispose } = createStore({ directoryAdapter: testDirectory() });
+  try {
+    await assert.rejects(
+      () => store.searchDirectoryPeople(store.actor("receiving-owner"), "owner"),
+      error => error instanceof WorkflowError && error.code === "FORBIDDEN"
+    );
+
+    const people = await store.searchDirectoryPeople(store.actor("submitter-1"), "Directory");
+    assert.deepEqual(people.map(person => person.id), ["accessibility-lead", "executive-sponsor", "receiving-owner"]);
+    assert.deepEqual(Object.keys(people[0]).sort(), ["active", "displayName", "id", "managerId", "organization"]);
+    assert.equal(Object.hasOwn(people[0], "email"), false);
+    assert.equal(Object.hasOwn(people[0], "employeeNumber"), false);
   } finally { dispose(); }
 });
 
