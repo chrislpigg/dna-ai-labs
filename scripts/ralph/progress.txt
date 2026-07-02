@@ -162,4 +162,13 @@ Started: 2026-06-20
 - Files changed: `migrations/009_intake_submit_withdraw.sql`, `server.mjs`, `app.js`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/intake-draft-ui.test.mjs`, `test/migration-runner.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: model withdrawal as an owner-governed soft delete with an audited controlled reason; this preserves lifecycle semantics and retention/audit behavior without making withdrawn intake content visible in portfolio queues.
 
+## 2026-07-02 — US-020 Add triage comments and requests for information
+
+- Added chronological project triage comments with author, timestamp, and controlled comment kind metadata. Comment text is available only through a dedicated intake triage endpoint rather than portfolio list reads.
+- Added server-owned request-for-information state on submitted or triaged intakes. Reviewers can request information without changing the lifecycle stage; assigned intake participants and governance reviewers can access the triage thread.
+- Implemented SQLite demo storage, tenant-scoped PostgreSQL migration/read/write paths, API routes, durable audit events, and focused tests for visibility, chronological ordering, RFI state, and transaction-backed writes.
+- Verification: `npm test` (63 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/010_triage_comments_requests.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: keep triage discussion content off broad portfolio reads; expose only the RFI state there, and put full comment visibility behind participant/reviewer authorization.
+
 ---

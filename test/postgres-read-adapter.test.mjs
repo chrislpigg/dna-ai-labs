@@ -19,7 +19,8 @@ function projectRow() {
     potential_reach: 4, problem: "Evidence is fragmented.", metric: "Review duration", baseline: "3 hours", target: "1 hour",
     metric_source: "Release tracker", metric_owner_id: "user-1", sponsor_id: "user-2", receiving_owner_id: "user-3",
     project_lead_id: "user-1", risk_classification: "Internal", transfer_date: "2026-12-18", adoption_acknowledged_at: null,
-    shared_platform_impact: false, extension_count: 0, created_at: "2026-06-20T00:00:00.000Z", updated_at: "2026-06-20T01:00:00.000Z"
+    triage_status: "information_requested", information_requested_by: "user-2", information_requested_at: "2026-06-20T00:30:00.000Z",
+    shared_platform_impact: false, extension_count: 0, created_at: "2026-06-20T00:00:00.000Z", created_by: "user-4", updated_at: "2026-06-20T01:00:00.000Z"
   };
 }
 
@@ -37,6 +38,8 @@ test("PostgreSQL reads are tenant-scoped and serialize portfolio evidence, revie
   const [project] = await adapter.listProjects();
 
   assert.equal(project.evidence[0].sampleSize, 12);
+  assert.equal(project.triageStatus, "information_requested");
+  assert.equal(project.informationRequestedBy, "user-2");
   assert.equal(project.reviewsComplete, true);
   assert.deepEqual(project.pendingDecision.requiredApprovers, ["lab-lead", "executive-sponsor"]);
   assert.deepEqual(project.pendingDecision.missingGates, ["operating_owner", "capacity_plan", "reviews_complete"]);
@@ -47,6 +50,19 @@ test("PostgreSQL reads are tenant-scoped and serialize portfolio evidence, revie
     assert.equal(call.params[0], "org-a");
   }
   assert.equal(database.calls.some(call => call.sql.includes("user-1")), false);
+});
+
+test("PostgreSQL triage comment reads are tenant and project scoped", async () => {
+  const database = new QueryMock([
+    { rows: [{ id: "comment-1", projectId: "project-1", authorId: "user-2", kind: "request_for_information", comment: "Clarify the pilot cohort.", createdAt: "2026-06-20T00:30:00.000Z" }] }
+  ]);
+  const adapter = new PostgresReadAdapter({ queryable: database, organizationId: "org-a" });
+  const comments = await adapter.listTriageComments("project-1");
+
+  assert.equal(comments[0].kind, "request_for_information");
+  assert.deepEqual(database.calls[0].params, ["org-a", "project-1"]);
+  assert.match(database.calls[0].sql, /project_triage_comments/);
+  assert.match(database.calls[0].sql, /organization_id = \$1 AND project_id = \$2/);
 });
 
 test("PostgreSQL user and audit reads scope the verified subject and never leak database errors", async () => {

@@ -40,6 +40,17 @@ function normalizeDraftContent(input = {}) {
 
 const collaboratorPermissions = Object.freeze(["edit"]);
 const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
+const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEIVING_OWNER];
+const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN];
+const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
+
+function normalizeTriageComment(input = {}, kind = "comment") {
+  if (!triageCommentKinds.includes(kind)) throw new WorkflowError("INVALID_TRIAGE_COMMENT_KIND", "Triage comment type is invalid.", 422);
+  const comment = String(input.comment ?? input.message ?? "").trim();
+  if (!comment) throw new WorkflowError("MISSING_TRIAGE_COMMENT", "A triage comment is required.", 422);
+  if (comment.length > 2000) throw new WorkflowError("TRIAGE_COMMENT_TOO_LONG", "Triage comments must be 2,000 characters or fewer.", 422);
+  return { comment, kind };
+}
 
 function normalizeCollaboratorRecords(input = {}) {
   const raw = Object.hasOwn(input, "collaborators")
@@ -128,6 +139,22 @@ class PostgresTransaction {
 
   async deleteIntakeDraftCollaborator(draftId, collaboratorId) {
     await this.query("DELETE FROM intake_draft_collaborators WHERE organization_id = $1 AND draft_id = $2 AND collaborator_id = $3", [this.organizationId, draftId, collaboratorId]);
+  }
+
+  async insertTriageComment(comment) {
+    await this.query(`INSERT INTO project_triage_comments (
+      id, organization_id, project_id, author_id, comment_kind, comment_text, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [
+      comment.id, this.organizationId, comment.projectId, comment.authorId, comment.kind, comment.comment, comment.createdAt
+    ]);
+  }
+
+  async updateProjectTriageStatus(projectId, triageStatus, actorId, timestamp) {
+    await this.query(`UPDATE projects
+      SET triage_status = $3, information_requested_by = $4, information_requested_at = $5, updated_at = $5, updated_by = $4
+      WHERE organization_id = $1 AND id = $2`, [
+      this.organizationId, projectId, triageStatus, actorId, timestamp
+    ]);
   }
 
   async updateProjectStage(id, stage, actorId, timestamp) {
@@ -442,6 +469,62 @@ export class PostgresWorkflowAdapter {
       await tx.appendAudit(actor.id, "intake_withdrawn", "project", id, { stage: project.stage, deletedAt: null }, { deletionReason: "withdrawn", deletedAt: timestamp });
     });
     return { id, withdrawnAt: timestamp, deletionReason: "withdrawn" };
+  }
+
+  isTriageReviewer(actor) {
+    return triageReviewerRoles.includes(actor?.role);
+  }
+
+  requireTriageCommentAccess(actor, project) {
+    if (this.isTriageReviewer(actor)) return;
+    requireRole(actor, triageParticipantRoles);
+    const participantIds = new Set([
+      project.createdBy, project.metricOwnerId, project.sponsor?.id, project.receivingOwner?.id, project.projectLead?.id
+    ].filter(Boolean));
+    if (!participantIds.has(actor.id)) {
+      throw new WorkflowError("FORBIDDEN", "You do not have access to this intake triage thread.", 403);
+    }
+  }
+
+  requireTriageProject(project) {
+    if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) {
+      throw new WorkflowError("INVALID_STATE", "Triage comments apply only to submitted or triaged intakes.", 409);
+    }
+  }
+
+  async listTriageComments(actor, projectId) {
+    const project = await this.project(projectId);
+    this.requireTriageCommentAccess(actor, project);
+    return this.reads.listTriageComments(projectId);
+  }
+
+  async addTriageComment(actor, projectId, input = {}) {
+    const project = await this.project(projectId);
+    this.requireTriageProject(project);
+    this.requireTriageCommentAccess(actor, project);
+    const id = randomUUID();
+    const timestamp = now();
+    const comment = normalizeTriageComment(input);
+    await this.transaction(async tx => {
+      await tx.insertTriageComment({ id, projectId, authorId: actor.id, kind: comment.kind, comment: comment.comment, createdAt: timestamp });
+      await tx.appendAudit(actor.id, "triage_comment_added", "triage_comment", id, null, { projectId, kind: comment.kind });
+    });
+    return this.listTriageComments(actor, projectId);
+  }
+
+  async requestTriageInformation(actor, projectId, input = {}) {
+    requireRole(actor, triageReviewerRoles);
+    const project = await this.project(projectId);
+    this.requireTriageProject(project);
+    const id = randomUUID();
+    const timestamp = now();
+    const comment = normalizeTriageComment(input, "request_for_information");
+    await this.transaction(async tx => {
+      await tx.insertTriageComment({ id, projectId, authorId: actor.id, kind: comment.kind, comment: comment.comment, createdAt: timestamp });
+      await tx.updateProjectTriageStatus(projectId, "information_requested", actor.id, timestamp);
+      await tx.appendAudit(actor.id, "triage_information_requested", "triage_comment", id, { triageStatus: project.triageStatus || "open", stage: project.stage }, { triageStatus: "information_requested", stage: project.stage, projectId });
+    });
+    return { project: await this.project(projectId), comments: await this.listTriageComments(actor, projectId) };
   }
 
   async selectProject(actor, id) {

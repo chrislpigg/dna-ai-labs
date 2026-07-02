@@ -71,6 +71,7 @@ export class SqliteLabsStorage {
         baseline TEXT NOT NULL, target TEXT NOT NULL, metric_source TEXT NOT NULL, metric_owner_id TEXT NOT NULL,
         sponsor_id TEXT NOT NULL, receiving_owner_id TEXT, project_lead_id TEXT NOT NULL, risk_classification TEXT NOT NULL,
         transfer_date TEXT, adoption_acknowledged_by TEXT, adoption_acknowledged_at TEXT, shared_platform_impact INTEGER NOT NULL DEFAULT 0, extension_count INTEGER NOT NULL DEFAULT 0,
+        triage_status TEXT NOT NULL DEFAULT 'open', information_requested_by TEXT, information_requested_at TEXT,
         created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
         deleted_at TEXT, deleted_by TEXT, deletion_reason TEXT,
         FOREIGN KEY(sponsor_id) REFERENCES users(id), FOREIGN KEY(receiving_owner_id) REFERENCES users(id), FOREIGN KEY(project_lead_id) REFERENCES users(id)
@@ -91,6 +92,13 @@ export class SqliteLabsStorage {
       );
       CREATE INDEX IF NOT EXISTS intake_drafts_owner_updated_idx ON intake_drafts (owner_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS intake_draft_collaborators_user_idx ON intake_draft_collaborators (collaborator_id, draft_id);
+      CREATE TABLE IF NOT EXISTS project_triage_comments (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, author_id TEXT NOT NULL, comment_kind TEXT NOT NULL DEFAULT 'comment',
+        comment_text TEXT NOT NULL, created_at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE, FOREIGN KEY(author_id) REFERENCES users(id),
+        CHECK(comment_kind IN ('comment', 'request_for_information'))
+      );
+      CREATE INDEX IF NOT EXISTS project_triage_comments_project_created_idx ON project_triage_comments (project_id, created_at, id);
       CREATE TABLE IF NOT EXISTS project_gates (
         project_id TEXT NOT NULL, gate_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'incomplete', evidence_link TEXT,
         completed_by TEXT, completed_at TEXT, exception_reason TEXT,
@@ -129,6 +137,9 @@ export class SqliteLabsStorage {
     `);
     this.ensureColumn("projects", "adoption_acknowledged_by", "TEXT");
     this.ensureColumn("projects", "adoption_acknowledged_at", "TEXT");
+    this.ensureColumn("projects", "triage_status", "TEXT NOT NULL DEFAULT 'open'");
+    this.ensureColumn("projects", "information_requested_by", "TEXT");
+    this.ensureColumn("projects", "information_requested_at", "TEXT");
     this.ensureColumn("projects", "deleted_at", "TEXT");
     this.ensureColumn("projects", "deleted_by", "TEXT");
     this.ensureColumn("projects", "deletion_reason", "TEXT");
@@ -249,6 +260,7 @@ export class SqliteLabsStorage {
       sponsor: { id: row.sponsor_id, name: row.sponsor_name }, receivingOwner: row.receiving_owner_id ? { id: row.receiving_owner_id, name: row.receiving_owner_name } : null,
       projectLead: { id: row.project_lead_id, name: row.project_lead_name }, riskClassification: row.risk_classification, transferDate: row.transfer_date,
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
+      triageStatus: row.triage_status || "open", informationRequestedBy: row.information_requested_by, informationRequestedAt: row.information_requested_at,
       sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
       createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by,
       deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
@@ -569,6 +581,21 @@ export class SqliteLabsStorage {
 
   deleteIntakeDraftCollaborator(draftId, collaboratorId) {
     this.db.prepare("DELETE FROM intake_draft_collaborators WHERE draft_id = ? AND collaborator_id = ?").run(draftId, collaboratorId);
+  }
+
+  listTriageComments(projectId) {
+    return this.db.prepare(`SELECT id, project_id AS projectId, author_id AS authorId, comment_kind AS kind, comment_text AS comment, created_at AS createdAt
+      FROM project_triage_comments WHERE project_id = ? ORDER BY created_at, rowid`).all(projectId);
+  }
+
+  insertTriageComment(comment) {
+    this.db.prepare("INSERT INTO project_triage_comments (id, project_id, author_id, comment_kind, comment_text, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(comment.id, comment.projectId, comment.authorId, comment.kind, comment.comment, comment.createdAt);
+  }
+
+  updateProjectTriageStatus(projectId, triageStatus, actorId, timestamp) {
+    this.db.prepare("UPDATE projects SET triage_status = ?, information_requested_by = ?, information_requested_at = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      .run(triageStatus, actorId, timestamp, timestamp, actorId, projectId);
   }
 
   updateProjectStage(id, stage, actorId, timestamp) {

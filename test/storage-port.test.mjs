@@ -28,6 +28,9 @@ test("workflow service operates through the storage port and preserves durable a
     assert.equal(storagePortMethods.includes("updateIntakeDraftStatus"), true);
     assert.equal(storagePortMethods.includes("insertIntakeDraftCollaborator"), true);
     assert.equal(storagePortMethods.includes("deleteIntakeDraftCollaborator"), true);
+    assert.equal(storagePortMethods.includes("listTriageComments"), true);
+    assert.equal(storagePortMethods.includes("insertTriageComment"), true);
+    assert.equal(storagePortMethods.includes("updateProjectTriageStatus"), true);
     assert.equal(storagePortMethods.includes("getDecision"), true);
     assert.equal(storagePortMethods.includes("appendAudit"), true);
     assert.equal(storagePortMethods.includes("transaction"), true);

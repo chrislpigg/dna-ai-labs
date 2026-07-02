@@ -128,6 +128,37 @@ test("submitted or triaged intakes can be withdrawn only by their owner before s
   } finally { dispose(); }
 });
 
+test("triage comments are chronological, participant-scoped, and RFI does not advance selection", () => {
+  const { store, dispose } = createStore();
+  try {
+    const submitter = store.actor("submitter-1");
+    const labLead = store.actor("lab-lead");
+    const project = store.createIntake(submitter, validIntake);
+
+    expectWorkflowError(() => store.listTriageComments(store.actor("employee-1"), project.id), "FORBIDDEN");
+    expectWorkflowError(() => store.addTriageComment(store.actor("employee-1"), project.id, { comment: "Unassigned comment" }), "FORBIDDEN");
+    expectWorkflowError(() => store.requestTriageInformation(submitter, project.id, { comment: "Need more detail" }), "FORBIDDEN");
+
+    const first = store.addTriageComment(submitter, project.id, { comment: "Initial context is ready for triage." });
+    assert.equal(first.length, 1);
+    assert.equal(first[0].authorId, "submitter-1");
+    assert.equal(first[0].kind, "comment");
+    assert.equal(store.listTriageComments(store.actor("accessibility-lead"), project.id)[0].comment, "Initial context is ready for triage.");
+
+    const result = store.requestTriageInformation(labLead, project.id, { comment: "Please clarify the pilot user cohort." });
+    assert.equal(result.project.stage, stages.SUBMITTED);
+    assert.equal(result.project.triageStatus, "information_requested");
+    assert.equal(result.comments.map(comment => comment.kind).join(","), "comment,request_for_information");
+    assert.equal(store.project(project.id).informationRequestedBy, "lab-lead");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "triage_comment_added"), true);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "triage_information_requested"), true);
+
+    store.acknowledgeAdoption(store.actor("receiving-owner"), project.id);
+    store.selectProject(labLead, project.id);
+    expectWorkflowError(() => store.addTriageComment(labLead, project.id, { comment: "Too late for triage." }), "INVALID_STATE");
+  } finally { dispose(); }
+});
+
 test("only Lab leadership can select and start an incubation", () => {
   const { store, dispose } = createStore();
   try {

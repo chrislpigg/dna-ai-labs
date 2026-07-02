@@ -32,6 +32,17 @@ function normalizeDraftContent(input = {}) {
 
 const collaboratorPermissions = Object.freeze(["edit"]);
 const intakeOwnerRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
+const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEIVING_OWNER];
+const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN];
+const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
+
+function normalizeTriageComment(input = {}, kind = "comment") {
+  if (!triageCommentKinds.includes(kind)) throw new WorkflowError("INVALID_TRIAGE_COMMENT_KIND", "Triage comment type is invalid.", 422);
+  const comment = String(input.comment ?? input.message ?? "").trim();
+  if (!comment) throw new WorkflowError("MISSING_TRIAGE_COMMENT", "A triage comment is required.", 422);
+  if (comment.length > 2000) throw new WorkflowError("TRIAGE_COMMENT_TOO_LONG", "Triage comments must be 2,000 characters or fewer.", 422);
+  return { comment, kind };
+}
 
 function normalizeCollaboratorRecords(input = {}) {
   const raw = Object.hasOwn(input, "collaborators")
@@ -260,6 +271,62 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "intake_withdrawn", "project", id, { stage: project.stage, deletedAt: null }, { deletionReason: "withdrawn", deletedAt: timestamp });
     });
     return { id, withdrawnAt: timestamp, deletionReason: "withdrawn" };
+  }
+
+  isTriageReviewer(actor) {
+    return triageReviewerRoles.includes(actor?.role);
+  }
+
+  requireTriageCommentAccess(actor, project) {
+    if (this.isTriageReviewer(actor)) return;
+    requireRole(actor, triageParticipantRoles);
+    const participantIds = new Set([
+      project.createdBy, project.metricOwnerId, project.sponsor?.id, project.receivingOwner?.id, project.projectLead?.id
+    ].filter(Boolean));
+    if (!participantIds.has(actor.id)) {
+      throw new WorkflowError("FORBIDDEN", "You do not have access to this intake triage thread.", 403);
+    }
+  }
+
+  requireTriageProject(project) {
+    if (![stages.SUBMITTED, stages.TRIAGE].includes(project.stage)) {
+      throw new WorkflowError("INVALID_STATE", "Triage comments apply only to submitted or triaged intakes.", 409);
+    }
+  }
+
+  listTriageComments(actor, projectId) {
+    const project = this.project(projectId);
+    this.requireTriageCommentAccess(actor, project);
+    return this.storage.listTriageComments(projectId);
+  }
+
+  addTriageComment(actor, projectId, input = {}) {
+    const project = this.project(projectId);
+    this.requireTriageProject(project);
+    this.requireTriageCommentAccess(actor, project);
+    const id = randomUUID();
+    const timestamp = now();
+    const comment = normalizeTriageComment(input);
+    this.storage.transaction(() => {
+      this.storage.insertTriageComment({ id, projectId, authorId: actor.id, kind: comment.kind, comment: comment.comment, createdAt: timestamp });
+      this.storage.appendAudit(actor.id, "triage_comment_added", "triage_comment", id, null, { projectId, kind: comment.kind });
+    });
+    return this.listTriageComments(actor, projectId);
+  }
+
+  requestTriageInformation(actor, projectId, input = {}) {
+    requireRole(actor, triageReviewerRoles);
+    const project = this.project(projectId);
+    this.requireTriageProject(project);
+    const id = randomUUID();
+    const timestamp = now();
+    const comment = normalizeTriageComment(input, "request_for_information");
+    this.storage.transaction(() => {
+      this.storage.insertTriageComment({ id, projectId, authorId: actor.id, kind: comment.kind, comment: comment.comment, createdAt: timestamp });
+      this.storage.updateProjectTriageStatus(projectId, "information_requested", actor.id, timestamp);
+      this.storage.appendAudit(actor.id, "triage_information_requested", "triage_comment", id, { triageStatus: project.triageStatus || "open", stage: project.stage }, { triageStatus: "information_requested", stage: project.stage, projectId });
+    });
+    return { project: this.project(projectId), comments: this.listTriageComments(actor, projectId) };
   }
 
   selectProject(actor, id) {

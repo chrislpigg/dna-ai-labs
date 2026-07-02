@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -32,6 +32,19 @@ test("intake submit migration allows submitted draft status for explicit transit
   assert.match(migration.sql, /DROP CONSTRAINT IF EXISTS intake_drafts_status_check/);
   assert.match(migration.sql, /CHECK \(status IN \('Draft', 'Submitted'\)\)/);
   assert.match(migration.sql, /intake_drafts_organization_status_updated_idx/);
+});
+
+test("triage comments migration records scoped comment metadata and RFI state", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "010_triage_comments_requests");
+  assert.ok(migration);
+  assert.match(migration.sql, /ALTER TABLE projects ADD COLUMN triage_status TEXT NOT NULL DEFAULT 'open'/);
+  assert.match(migration.sql, /information_requested_by TEXT/);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS project_triage_comments/);
+  assert.match(migration.sql, /comment_sequence BIGSERIAL/);
+  assert.match(migration.sql, /comment_kind TEXT NOT NULL DEFAULT 'comment' CHECK \(comment_kind IN \('comment', 'request_for_information'\)\)/);
+  assert.match(migration.sql, /comment_text TEXT NOT NULL CHECK \(char_length\(comment_text\) BETWEEN 1 AND 2000\)/);
+  assert.match(migration.sql, /project_triage_comments_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\)/);
+  assert.match(migration.sql, /project_triage_comments_organization_project_created_idx[\s\S]*organization_id, project_id, created_at, comment_sequence/);
 });
 
 test("intake draft collaborator migration records explicit draft permissions", () => {
