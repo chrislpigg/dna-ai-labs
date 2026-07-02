@@ -17,6 +17,7 @@ export const storagePortMethods = Object.freeze([
   "listIntakeRevisions", "getIntakeRevision", "insertIntakeRevision", "updateProjectIntakeContent",
   "insertProject", "updateProjectStage", "acknowledgeProjectAdoption",
   "upsertGate", "insertEvidence", "upsertReview", "listReviews",
+  "listDeliveryKitItems", "upsertDeliveryKitItem", "deleteDeliveryKitItem",
   "getHandoff", "upsertHandoff",
   "findOpenDecision", "insertDecision", "getDecision", "listApprovals",
   "insertApproval", "rejectDecision", "finalizeDecision", "projectRetentionUntil", "softDeleteProject", "restoreProject",

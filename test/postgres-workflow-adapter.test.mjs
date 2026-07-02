@@ -40,6 +40,8 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
     await tx.updateProjectTriageStatus("project-1", "information_requested", "user-2", "2026-06-20T00:30:00.000Z");
     await tx.insertEvidence({ id: "evidence-1", projectId: "project-1", evidenceType: "metric_result", result: "Faster", sampleSize: 12, confidence: "high", sourceLink: "https://docs.example/metric", observedAt: "2026-06-19", createdBy: "user-1", createdAt: "2026-06-20T00:00:00.000Z" });
     await tx.upsertReview({ projectId: "project-1", reviewType: "accessibility", status: "complete", evidenceLink: "https://docs.example/review", completedBy: "user-1", completedAt: "2026-06-20T00:00:00.000Z", exceptionReason: null });
+    await tx.upsertDeliveryKitItem({ projectId: "project-1", itemKey: "architecture", status: "complete", ownerId: "user-1", evidenceLink: "https://docs.example/architecture", acceptedAt: "2026-06-20T00:00:00.000Z", acceptedBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
+    await tx.deleteDeliveryKitItem("project-1", "architecture");
     await tx.insertDecision({ id: "decision-1", projectId: "project-1", outcome: "Scale", rationale: "Measured result", status: "requested", requestedBy: "user-1", requestedAt: "2026-06-20T00:00:00.000Z" });
     await tx.insertApproval({ id: "approval-1", decisionId: "decision-1", approverId: "user-2", approverRole: "lab-lead", result: "approved", comment: "Reviewed", createdAt: "2026-06-20T00:00:00.000Z" });
     await tx.upsertHandoff({ projectId: "project-1", receivingOwnerId: "user-3", status: "accepted", adoptionPlanLink: "https://docs.example/adoption", supportEndDate: "2026-12-18", followUpDate: "2026-12-20", onboardingAcknowledged: true, acceptedBy: "user-3", acceptedAt: "2026-06-20T00:00:00.000Z" });
@@ -50,7 +52,7 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const sql = client.calls.map(call => call.sql);
   assert.equal(sql[0], "BEGIN");
   assert.equal(sql.at(-1), "COMMIT");
-  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "evidence_entries", "project_reviews", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "evidence_entries", "project_reviews", "delivery_kit_items", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE cycles")), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE intake_drafts")), true);
   assert.equal(sql.some(statement => statement.includes("target = $11")), true);
@@ -59,6 +61,7 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   assert.equal(sql.some(statement => statement.includes("SET status = $3")), true);
   assert.equal(sql.some(statement => statement.includes("deletion_reason")), true);
   assert.equal(sql.some(statement => statement.includes("DELETE FROM intake_draft_collaborators")), true);
+  assert.equal(sql.some(statement => statement.includes("DELETE FROM delivery_kit_items")), true);
   for (const call of client.calls.slice(1, -1)) assert.equal(call.params.includes("org-a"), true);
   assert.equal(client.released, true);
 });

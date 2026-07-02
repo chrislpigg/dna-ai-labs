@@ -4,6 +4,7 @@ import { retentionExpired, retentionUntil } from "./retention-policy.mjs";
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPersonSync } from "./directory-adapter.mjs";
 import { enrichProjectDirectoryContextSync } from "./directory-context.mjs";
+import { normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -644,6 +645,58 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete });
     });
     return this.project(projectId);
+  }
+
+  requireDeliveryKitWriteAccess(actor, project) {
+    requireRole(actor, [roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN]);
+    if (actor.role === roles.PROJECT_LEAD && project.projectLead.id !== actor.id) {
+      throw new WorkflowError("FORBIDDEN", "Project leads can update delivery-kit items only for their assigned projects.", 403);
+    }
+  }
+
+  listDeliveryKit(actor, projectId) {
+    requireRole(actor, Object.values(roles));
+    this.project(projectId);
+    return this.storage.listDeliveryKitItems(projectId);
+  }
+
+  upsertDeliveryKitItem(actor, projectId, itemKey, input = {}) {
+    const project = this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = normalizeDeliveryKitItemKey(itemKey);
+    const item = normalizeDeliveryKitInput(input);
+    this.actor(item.ownerId);
+    if (item.evidenceLink) this.validateEvidenceLink(item.evidenceLink);
+    const before = this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key) || null;
+    const timestamp = now();
+    const next = {
+      projectId,
+      itemKey: key,
+      status: item.status,
+      ownerId: item.ownerId,
+      evidenceLink: item.evidenceLink,
+      acceptedAt: item.status === "complete" ? timestamp : null,
+      acceptedBy: item.status === "complete" ? actor.id : null,
+      updatedAt: timestamp,
+      updatedBy: actor.id
+    };
+    this.storage.transaction(() => {
+      this.storage.upsertDeliveryKitItem(next);
+      this.storage.appendAudit(actor.id, "delivery_kit_item_updated", "delivery_kit_item", `${projectId}:${key}`, before, { itemKey: key, status: next.status, ownerId: next.ownerId });
+    });
+    return this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key);
+  }
+
+  deleteDeliveryKitItem(actor, projectId, itemKey) {
+    const project = this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = normalizeDeliveryKitItemKey(itemKey);
+    const before = this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key) || null;
+    this.storage.transaction(() => {
+      this.storage.deleteDeliveryKitItem(projectId, key);
+      this.storage.appendAudit(actor.id, "delivery_kit_item_deleted", "delivery_kit_item", `${projectId}:${key}`, before, null);
+    });
+    return this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key);
   }
 
   acceptHandoff(actor, projectId, input) {

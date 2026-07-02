@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -35,6 +35,16 @@ test("role assignment migration stores audited application role metadata", () =>
   assert.match(migration.sql, /role_assignments_user_organization_fk FOREIGN KEY \(user_id, organization_id\) REFERENCES users\(id, organization_id\)/);
   assert.match(migration.sql, /role_assignments_assigned_by_organization_fk FOREIGN KEY \(assigned_by, organization_id\) REFERENCES users\(id, organization_id\)/);
   assert.match(migration.sql, /role_assignments_organization_role_idx/);
+});
+
+test("delivery-kit migration stores tenant-scoped required readiness items", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "016_delivery_kit_items");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS delivery_kit_items/);
+  assert.match(migration.sql, /item_key IN \('architecture', 'evaluation', 'operating_model', 'onboarding', 'support', 'cost', 'monitoring', 'rollback'\)/);
+  assert.match(migration.sql, /delivery_kit_items_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /delivery_kit_items_owner_organization_fk FOREIGN KEY \(owner_id, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.match(migration.sql, /delivery_kit_items_project_idx ON delivery_kit_items \(organization_id, project_id, item_key\)/);
 });
 
 test("feature flag migration stores tenant-scoped pilot controls", () => {

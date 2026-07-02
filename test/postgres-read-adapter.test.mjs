@@ -30,6 +30,7 @@ test("PostgreSQL reads are tenant-scoped and serialize portfolio evidence, revie
     { rows: [{ project_id: "project-1", gate_key: "metric_evidence", status: "complete", evidence_link: "https://docs.example/metric", completed_by: "user-1", completed_at: "2026-06-20T00:00:00.000Z", exception_reason: null }] },
     { rows: [{ id: "evidence-1", project_id: "project-1", evidence_type: "metric_result", result: "Faster", sample_size: 12, confidence: "high", source_link: "https://docs.example/metric", observed_at: "2026-06-19", created_by: "user-1", created_at: "2026-06-20T00:00:00.000Z" }] },
     { rows: [{ project_id: "project-1", review_type: "accessibility", status: "complete", evidence_link: "https://docs.example/a11y", completed_by: "user-1", completed_at: "2026-06-20T00:00:00.000Z", exception_reason: null }, { project_id: "project-1", review_type: "responsible_ai", status: "complete", evidence_link: "https://docs.example/rai", completed_by: "user-1", completed_at: "2026-06-20T00:00:00.000Z", exception_reason: null }] },
+    { rows: [{ project_id: "project-1", item_key: "architecture", status: "complete", owner_id: "user-1", evidence_link: "https://docs.example/architecture", accepted_at: "2026-06-20T00:00:00.000Z", accepted_by: "user-1", updated_at: "2026-06-20T00:00:00.000Z", updated_by: "user-1" }] },
     { rows: [{ id: "decision-1", project_id: "project-1", outcome: "Scale", rationale: "Measured result", status: "requested", requested_by: "user-1", requested_at: "2026-06-20T00:00:00.000Z", finalized_by: null, finalized_at: null }] },
     { rows: [{ decision_id: "decision-1", approver_id: "user-2", approver_role: "lab-lead", result: "approved", comment: "Evidence reviewed", created_at: "2026-06-20T00:00:00.000Z" }] },
     { rows: [] }
@@ -42,11 +43,14 @@ test("PostgreSQL reads are tenant-scoped and serialize portfolio evidence, revie
   assert.equal(project.capacityUnits, 2);
   assert.equal(project.triageStatus, "information_requested");
   assert.equal(project.informationRequestedBy, "user-2");
+  assert.equal(project.deliveryKit.length, 8);
+  assert.equal(project.deliveryKit.find(item => item.itemKey === "architecture").status, "complete");
+  assert.equal(project.deliveryKit.find(item => item.itemKey === "rollback").status, "not_started");
   assert.equal(project.reviewsComplete, true);
   assert.deepEqual(project.pendingDecision.requiredApprovers, ["lab-lead", "executive-sponsor"]);
   assert.deepEqual(project.pendingDecision.missingGates, ["operating_owner", "capacity_plan", "reviews_complete"]);
   assert.equal(project.sponsor.name, undefined);
-  assert.equal(database.calls.length, 7);
+  assert.equal(database.calls.length, 8);
   for (const call of database.calls) {
     assert.match(call.sql, /organization_id = \$1/);
     assert.equal(call.params[0], "org-a");

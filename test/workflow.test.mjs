@@ -303,6 +303,37 @@ test("administrators can create and update governed program cycles", () => {
   } finally { dispose(); }
 });
 
+test("delivery-kit items are required, owner-assigned, approved-link backed, and audited", () => {
+  const { store, dispose } = createStore();
+  try {
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    const lead = store.actor("accessibility-lead");
+    const labLead = store.actor("lab-lead");
+
+    const defaults = store.listDeliveryKit(labLead, project.id);
+    assert.deepEqual(defaults.map(item => item.itemKey), ["architecture", "evaluation", "operating_model", "onboarding", "support", "cost", "monitoring", "rollback"]);
+    assert.equal(defaults.every(item => item.status === "not_started"), true);
+    expectWorkflowError(() => store.upsertDeliveryKitItem(store.actor("receiving-owner"), project.id, "architecture", { status: "in_progress", ownerId: "accessibility-lead" }), "FORBIDDEN");
+    expectWorkflowError(() => store.upsertDeliveryKitItem(lead, project.id, "unknown", { status: "in_progress", ownerId: "accessibility-lead" }), "INVALID_DELIVERY_KIT_ITEM");
+    expectWorkflowError(() => store.upsertDeliveryKitItem(lead, project.id, "architecture", { status: "complete", ownerId: "accessibility-lead" }), "MISSING_DELIVERY_KIT_EVIDENCE");
+    expectWorkflowError(() => store.upsertDeliveryKitItem(lead, project.id, "architecture", { status: "complete", ownerId: "accessibility-lead", evidenceLink: "https://external.example/architecture" }), "UNAPPROVED_EVIDENCE_LINK");
+
+    const item = store.upsertDeliveryKitItem(lead, project.id, "architecture", {
+      status: "complete",
+      ownerId: "accessibility-lead",
+      evidenceLink: "https://intranet.example/architecture"
+    });
+    assert.equal(item.status, "complete");
+    assert.equal(item.acceptedBy, "accessibility-lead");
+    assert.equal(store.project(project.id).deliveryKit.find(entry => entry.itemKey === "architecture").evidenceLink, "https://intranet.example/architecture");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "delivery_kit_item_updated" && event.entityId === `${project.id}:architecture`), true);
+
+    const reset = store.deleteDeliveryKitItem(labLead, project.id, "architecture");
+    assert.equal(reset.status, "not_started");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "delivery_kit_item_deleted" && event.entityId === `${project.id}:architecture`), true);
+  } finally { dispose(); }
+});
+
 test("selection cannot exceed the cycle's approved capacity", () => {
   const { store, dispose } = createStore();
   try {

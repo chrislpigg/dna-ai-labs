@@ -7,6 +7,7 @@ import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-inte
 import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPerson } from "./directory-adapter.mjs";
 import { enrichProjectDirectoryContext } from "./directory-context.mjs";
+import { defaultDeliveryKitItems, normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -326,6 +327,28 @@ class PostgresTransaction {
   async listReviews(projectId) {
     const result = await this.query("SELECT review_type AS \"reviewType\", status FROM project_reviews WHERE organization_id = $1 AND project_id = $2", [this.organizationId, projectId]);
     return result.rows || [];
+  }
+
+  async listDeliveryKitItems(projectId) {
+    const result = await this.query(`SELECT project_id AS "projectId", item_key AS "itemKey", status, owner_id AS "ownerId",
+      evidence_link AS "evidenceLink", accepted_at AS "acceptedAt", accepted_by AS "acceptedBy", updated_at AS "updatedAt", updated_by AS "updatedBy"
+      FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 ORDER BY item_key`, [this.organizationId, projectId]);
+    return result.rows || [];
+  }
+
+  async upsertDeliveryKitItem(item) {
+    await this.query(`INSERT INTO delivery_kit_items (project_id, organization_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (project_id, organization_id, item_key) DO UPDATE SET status = EXCLUDED.status, owner_id = EXCLUDED.owner_id,
+        evidence_link = EXCLUDED.evidence_link, accepted_at = EXCLUDED.accepted_at, accepted_by = EXCLUDED.accepted_by,
+        updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`, [
+      item.projectId, this.organizationId, item.itemKey, item.status, item.ownerId, item.evidenceLink,
+      item.acceptedAt, item.acceptedBy, item.updatedAt, item.updatedBy
+    ]);
+  }
+
+  async deleteDeliveryKitItem(projectId, itemKey) {
+    await this.query("DELETE FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 AND item_key = $3", [this.organizationId, projectId, itemKey]);
   }
 
   async getHandoff(projectId) {
@@ -876,6 +899,57 @@ export class PostgresWorkflowAdapter {
       await tx.appendAudit(actor.id, "review_updated", "project_review", `${projectId}:${reviewType}`, before, { reviewType, status: input.status, reviewsComplete: complete });
     });
     return this.project(projectId);
+  }
+
+  requireDeliveryKitWriteAccess(actor, project) {
+    requireRole(actor, [roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN]);
+    if (actor.role === roles.PROJECT_LEAD && project.projectLead.id !== actor.id) {
+      throw new WorkflowError("FORBIDDEN", "Project leads can update delivery-kit items only for their assigned projects.", 403);
+    }
+  }
+
+  async listDeliveryKit(actor, projectId) {
+    requireRole(actor, Object.values(roles));
+    await this.project(projectId);
+    return defaultDeliveryKitItems(projectId, await this.reads.query(
+      `SELECT project_id AS "projectId", item_key AS "itemKey", status, owner_id AS "ownerId", evidence_link AS "evidenceLink",
+        accepted_at AS "acceptedAt", accepted_by AS "acceptedBy", updated_at AS "updatedAt", updated_by AS "updatedBy"
+       FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 ORDER BY item_key`,
+      [this.organizationId, projectId]
+    ).then(result => result.rows || []));
+  }
+
+  async upsertDeliveryKitItem(actor, projectId, itemKey, input = {}) {
+    const project = await this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = normalizeDeliveryKitItemKey(itemKey);
+    const item = normalizeDeliveryKitInput(input);
+    await this.actor(item.ownerId);
+    if (item.evidenceLink) this.validateEvidenceLink(item.evidenceLink);
+    const before = project.deliveryKit.find(existing => existing.itemKey === key) || null;
+    const timestamp = now();
+    const next = {
+      projectId, itemKey: key, status: item.status, ownerId: item.ownerId, evidenceLink: item.evidenceLink,
+      acceptedAt: item.status === "complete" ? timestamp : null, acceptedBy: item.status === "complete" ? actor.id : null,
+      updatedAt: timestamp, updatedBy: actor.id
+    };
+    await this.transaction(async tx => {
+      await tx.upsertDeliveryKitItem(next);
+      await tx.appendAudit(actor.id, "delivery_kit_item_updated", "delivery_kit_item", `${projectId}:${key}`, before, { itemKey: key, status: next.status, ownerId: next.ownerId });
+    });
+    return (await this.project(projectId)).deliveryKit.find(existing => existing.itemKey === key);
+  }
+
+  async deleteDeliveryKitItem(actor, projectId, itemKey) {
+    const project = await this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const key = normalizeDeliveryKitItemKey(itemKey);
+    const before = project.deliveryKit.find(existing => existing.itemKey === key) || null;
+    await this.transaction(async tx => {
+      await tx.deleteDeliveryKitItem(projectId, key);
+      await tx.appendAudit(actor.id, "delivery_kit_item_deleted", "delivery_kit_item", `${projectId}:${key}`, before, null);
+    });
+    return (await this.project(projectId)).deliveryKit.find(existing => existing.itemKey === key);
   }
 
   async acceptHandoff(actor, projectId, input) {

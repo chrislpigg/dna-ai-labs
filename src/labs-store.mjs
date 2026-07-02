@@ -20,6 +20,7 @@ import { retentionClassification, retentionUntil } from "./retention-policy.mjs"
 import { auditEventHash, auditGenesisHash, verifyAuditChain } from "./audit-integrity.mjs";
 import { featureFlagDefaults } from "./feature-flags.mjs";
 import { DirectoryAdapter } from "./directory-adapter.mjs";
+import { defaultDeliveryKitItems } from "./delivery-kit.mjs";
 
 const now = () => new Date().toISOString();
 const json = value => JSON.stringify(value ?? {});
@@ -133,6 +134,14 @@ export class SqliteLabsStorage {
         project_id TEXT NOT NULL, review_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'incomplete',
         evidence_link TEXT, completed_by TEXT, completed_at TEXT, exception_reason TEXT,
         PRIMARY KEY(project_id, review_type), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS delivery_kit_items (
+        project_id TEXT NOT NULL, item_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'not_started',
+        owner_id TEXT, evidence_link TEXT, accepted_at TEXT, accepted_by TEXT, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        PRIMARY KEY(project_id, item_key),
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY(owner_id) REFERENCES users(id), FOREIGN KEY(accepted_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
+        CHECK(status IN ('not_started', 'in_progress', 'complete'))
       );
       CREATE TABLE IF NOT EXISTS decisions (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, outcome TEXT NOT NULL, rationale TEXT NOT NULL, status TEXT NOT NULL,
@@ -320,6 +329,7 @@ export class SqliteLabsStorage {
     const decisionHistory = this.db.prepare("SELECT id, outcome, rationale, status, requested_at AS requestedAt, finalized_at AS finalizedAt FROM decisions WHERE project_id = ? ORDER BY requested_at DESC LIMIT 5").all(row.id);
     const reviewRequirements = requiredReviewTypes(row.risk_classification);
     const reviews = this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(row.id);
+    const deliveryKit = this.listDeliveryKitItems(row.id);
     const reviewsComplete = reviewRequirements.every(type => reviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
     const decision = this.db.prepare("SELECT id, outcome, rationale, status, requested_by AS requestedBy, requested_at AS requestedAt FROM decisions WHERE project_id = ? AND status = 'requested' ORDER BY requested_at DESC LIMIT 1").get(row.id);
     const decisionApprovals = decision ? this.db.prepare("SELECT approver_id AS approverId, approver_role AS approverRole, result, comment, created_at AS createdAt FROM approvals WHERE decision_id = ? ORDER BY created_at").all(decision.id) : [];
@@ -333,7 +343,7 @@ export class SqliteLabsStorage {
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
       cycleId: row.cycle_id, capacityUnits: row.capacity_units || 1,
       triageStatus: row.triage_status || "open", informationRequestedBy: row.information_requested_by, informationRequestedAt: row.information_requested_at,
-      sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
+      sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, deliveryKit, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
       createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by,
       deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
     };
@@ -801,6 +811,37 @@ export class SqliteLabsStorage {
 
   listReviews(projectId) {
     return this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(projectId);
+  }
+
+  serializeDeliveryKitItem(row) {
+    return {
+      projectId: row.project_id,
+      itemKey: row.item_key,
+      status: row.status,
+      ownerId: row.owner_id,
+      evidenceLink: row.evidence_link,
+      acceptedAt: row.accepted_at,
+      acceptedBy: row.accepted_by,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by
+    };
+  }
+
+  listDeliveryKitItems(projectId) {
+    const rows = this.db.prepare(`SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by
+      FROM delivery_kit_items WHERE project_id = ? ORDER BY item_key`).all(projectId).map(row => this.serializeDeliveryKitItem(row));
+    return defaultDeliveryKitItems(projectId, rows);
+  }
+
+  upsertDeliveryKitItem(item) {
+    this.db.prepare(`INSERT INTO delivery_kit_items (project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, item_key) DO UPDATE SET status = excluded.status, owner_id = excluded.owner_id,
+      evidence_link = excluded.evidence_link, accepted_at = excluded.accepted_at, accepted_by = excluded.accepted_by, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+      .run(item.projectId, item.itemKey, item.status, item.ownerId, item.evidenceLink, item.acceptedAt, item.acceptedBy, item.updatedAt, item.updatedBy);
+  }
+
+  deleteDeliveryKitItem(projectId, itemKey) {
+    this.db.prepare("DELETE FROM delivery_kit_items WHERE project_id = ? AND item_key = ?").run(projectId, itemKey);
   }
 
   getHandoff(projectId) {
