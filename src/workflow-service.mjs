@@ -16,6 +16,26 @@ import {
 
 const now = () => new Date().toISOString();
 export const deletionReasons = Object.freeze(["duplicate", "withdrawn", "created_in_error", "governance_removal"]);
+const draftAllowedRoles = [roles.EMPLOYEE, roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
+
+function normalizeDraftContent(input = {}) {
+  const allowedKeys = [
+    "title", "originTeam", "users", "potentialReach", "problem", "metric", "baseline", "target", "metricSource",
+    "metricOwnerId", "sponsorId", "receivingOwnerId", "projectLeadId", "riskClassification", "transferDate",
+    "sharedPlatformImpact", "adoptionGate", "evidenceGate", "cycleId"
+  ];
+  return Object.fromEntries(allowedKeys.filter(key => Object.hasOwn(input, key)).map(key => {
+    const value = input[key];
+    return [key, typeof value === "string" ? value.trim() : value];
+  }));
+}
+
+function normalizeCollaborators(value = []) {
+  if (!Array.isArray(value)) throw new WorkflowError("INVALID_COLLABORATORS", "Draft collaborators must be an array.", 422);
+  const ids = [...new Set(value.map(item => String(item ?? "").trim()).filter(Boolean))];
+  if (ids.length > 25) throw new WorkflowError("TOO_MANY_COLLABORATORS", "Draft collaborator limit exceeded.", 422);
+  return ids;
+}
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
@@ -28,7 +48,59 @@ export class WorkflowService {
   users() { return this.storage.listUsers(); }
   project(id) { return this.storage.getProject(id); }
   listProjects() { return this.storage.listProjects(); }
+  intakeDraft(actor, id) {
+    const draft = this.storage.getIntakeDraft(id);
+    this.requireDraftAccess(actor, draft);
+    return draft;
+  }
+  listIntakeDrafts(actor) {
+    requireRole(actor, draftAllowedRoles);
+    return this.storage.listIntakeDrafts(actor.id);
+  }
   verifyAuditIntegrity() { return this.storage.verifyAuditIntegrity(); }
+
+  requireDraftAccess(actor, draft) {
+    requireRole(actor, draftAllowedRoles);
+    if (draft.ownerId !== actor.id && !draft.collaboratorIds.includes(actor.id)) {
+      throw new WorkflowError("FORBIDDEN", "You do not have access to this draft.", 403);
+    }
+  }
+
+  createIntakeDraft(actor, input = {}) {
+    requireRole(actor, draftAllowedRoles);
+    const id = randomUUID();
+    const timestamp = now();
+    const collaboratorIds = normalizeCollaborators(input.collaboratorIds);
+    for (const collaboratorId of collaboratorIds) this.actor(collaboratorId);
+    const draft = {
+      id, status: stages.DRAFT, ownerId: actor.id, collaboratorIds,
+      content: normalizeDraftContent(input.content || input),
+      createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+    };
+    this.storage.transaction(() => {
+      this.storage.insertIntakeDraft(draft);
+      this.storage.appendAudit(actor.id, "intake_draft_created", "intake_draft", id, null, { status: stages.DRAFT });
+    });
+    return this.intakeDraft(actor, id);
+  }
+
+  updateIntakeDraft(actor, id, input = {}) {
+    const draft = this.storage.getIntakeDraft(id);
+    this.requireDraftAccess(actor, draft);
+    const collaboratorIds = Object.hasOwn(input, "collaboratorIds") ? normalizeCollaborators(input.collaboratorIds) : draft.collaboratorIds;
+    if (actor.id !== draft.ownerId && collaboratorIds.join("\0") !== draft.collaboratorIds.join("\0")) {
+      throw new WorkflowError("FORBIDDEN", "Only the draft owner can change draft collaborators.", 403);
+    }
+    for (const collaboratorId of collaboratorIds) this.actor(collaboratorId);
+    const contentPatch = normalizeDraftContent(input.content || input);
+    const content = { ...draft.content, ...contentPatch };
+    const timestamp = now();
+    this.storage.transaction(() => {
+      this.storage.updateIntakeDraft(id, { content, collaboratorIds, updatedAt: timestamp, updatedBy: actor.id });
+      this.storage.appendAudit(actor.id, "intake_draft_updated", "intake_draft", id, { updatedAt: draft.updatedAt }, { updatedAt: timestamp });
+    });
+    return this.intakeDraft(actor, id);
+  }
 
   deleteProject(actor, id, deletionReason) {
     requireRole(actor, [roles.ADMIN]);

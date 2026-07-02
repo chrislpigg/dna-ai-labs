@@ -20,10 +20,22 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("intake draft migration keeps incomplete drafts tenant-scoped outside submitted projects", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "007_intake_draft_persistence");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS intake_drafts/);
+  assert.match(migration.sql, /organization_id TEXT NOT NULL REFERENCES organizations\(id\)/);
+  assert.match(migration.sql, /status TEXT NOT NULL DEFAULT 'Draft' CHECK \(status = 'Draft'\)/);
+  assert.match(migration.sql, /collaborator_ids JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.match(migration.sql, /content JSONB NOT NULL DEFAULT '\{\}'::jsonb/);
+  assert.match(migration.sql, /intake_drafts_owner_organization_fk FOREIGN KEY \(owner_id, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.doesNotMatch(migration.sql, /ALTER TABLE projects ADD COLUMN .*draft/i);
 });
 
 test("soft-delete migration retains governed records and never soft-deletes audit events", () => {

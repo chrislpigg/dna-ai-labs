@@ -63,3 +63,18 @@ test("PostgreSQL user and audit reads scope the verified subject and never leak 
   const unavailable = new PostgresReadAdapter({ queryable: new QueryMock([new Error("connection secret")]), organizationId: "org-a" });
   await assert.rejects(() => unavailable.listAuditEvents(), error => error instanceof WorkflowError && error.code === "DATABASE_UNAVAILABLE" && !error.message.includes("secret"));
 });
+
+test("PostgreSQL draft reads are tenant and actor scoped", async () => {
+  const database = new QueryMock([
+    { rows: [{ id: "draft-1", status: "Draft", owner_id: "user-1", collaborator_ids: ["user-2"], content: { title: "Draft" }, created_at: "2026-06-20T00:00:00.000Z", created_by: "user-1", updated_at: "2026-06-20T01:00:00.000Z", updated_by: "user-1" }] },
+    { rows: [{ id: "draft-1", status: "Draft", owner_id: "user-1", collaborator_ids: ["user-2"], content: { title: "Draft" }, created_at: "2026-06-20T00:00:00.000Z", created_by: "user-1", updated_at: "2026-06-20T01:00:00.000Z", updated_by: "user-1" }] }
+  ]);
+  const adapter = new PostgresReadAdapter({ queryable: database, organizationId: "org-a" });
+
+  assert.equal((await adapter.listIntakeDrafts("user-2"))[0].ownerId, "user-1");
+  assert.equal((await adapter.getIntakeDraft("draft-1")).content.title, "Draft");
+  assert.equal(database.calls[0].params[0], "org-a");
+  assert.equal(database.calls[0].params[1], "user-2");
+  assert.match(database.calls[0].sql, /collaborator_ids \? \$2/);
+  assert.deepEqual(database.calls[1].params, ["org-a", "draft-1"]);
+});

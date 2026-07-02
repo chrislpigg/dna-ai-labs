@@ -126,4 +126,12 @@ Started: 2026-06-20
 - Files changed: `docs/backup-and-restore-runbook.md`, `README.md`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: a restore runbook must separate the provider-owned recovery mechanics from the application-owned integrity and authorization checks, so neither team assumes the other verified end-to-end recoverability.
 
+## 2026-07-02 — US-016 Add intake draft persistence
+
+- Added server-owned intake draft persistence with explicit `Draft` status, owner and draft-collaborator access checks, create/read/update API endpoints, and durable audit events for draft creation and updates.
+- Kept drafts separate from submitted projects through a dedicated SQLite demo table and tenant-scoped PostgreSQL `intake_drafts` migration, so drafts do not enter portfolio reads, selection queues, or decision workflow state.
+- Verification: `npm test` (53 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for the linked Vercel project, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/007_intake_draft_persistence.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: keep incomplete intake content in an access-scoped draft table until submission; overloading the authoritative project table would either require placeholder governance data or risk exposing drafts through portfolio queries.
+
 ---

@@ -31,6 +31,31 @@ test("an intake needs meaningful evidence and adoption inputs", () => {
   } finally { dispose(); }
 });
 
+test("intake drafts can be saved incomplete and are visible only to owners and draft collaborators", () => {
+  const { store, dispose } = createStore();
+  try {
+    const submitter = store.actor("submitter-1");
+    const draft = store.createIntakeDraft(submitter, {
+      collaboratorIds: ["accessibility-lead"],
+      content: { title: "  Draft release assistant  ", problem: "Still being scoped.", potentialReach: 0 }
+    });
+
+    assert.equal(draft.status, stages.DRAFT);
+    assert.equal(draft.ownerId, "submitter-1");
+    assert.equal(draft.content.title, "Draft release assistant");
+    assert.equal(store.listProjects().some(project => project.id === draft.id), false);
+    assert.equal(store.listIntakeDrafts(submitter).some(item => item.id === draft.id), true);
+    assert.equal(store.intakeDraft(store.actor("accessibility-lead"), draft.id).id, draft.id);
+    expectWorkflowError(() => store.intakeDraft(store.actor("lab-lead"), draft.id), "FORBIDDEN");
+
+    const updated = store.updateIntakeDraft(store.actor("accessibility-lead"), draft.id, { content: { metric: "Cycle time" } });
+    assert.equal(updated.content.metric, "Cycle time");
+    expectWorkflowError(() => store.updateIntakeDraft(store.actor("accessibility-lead"), draft.id, { collaboratorIds: ["lab-lead"] }), "FORBIDDEN");
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_created"), true);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "intake_draft_updated"), true);
+  } finally { dispose(); }
+});
+
 test("only Lab leadership can select and start an incubation", () => {
   const { store, dispose } = createStore();
   try {

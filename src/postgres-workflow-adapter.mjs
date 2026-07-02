@@ -24,6 +24,26 @@ const requiredText = (value, label) => {
   if (!text) throw new TypeError(`${label} is required.`);
   return text;
 };
+const draftAllowedRoles = [roles.EMPLOYEE, roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
+
+function normalizeDraftContent(input = {}) {
+  const allowedKeys = [
+    "title", "originTeam", "users", "potentialReach", "problem", "metric", "baseline", "target", "metricSource",
+    "metricOwnerId", "sponsorId", "receivingOwnerId", "projectLeadId", "riskClassification", "transferDate",
+    "sharedPlatformImpact", "adoptionGate", "evidenceGate", "cycleId"
+  ];
+  return Object.fromEntries(allowedKeys.filter(key => Object.hasOwn(input, key)).map(key => {
+    const value = input[key];
+    return [key, typeof value === "string" ? value.trim() : value];
+  }));
+}
+
+function normalizeCollaborators(value = []) {
+  if (!Array.isArray(value)) throw new WorkflowError("INVALID_COLLABORATORS", "Draft collaborators must be an array.", 422);
+  const ids = [...new Set(value.map(item => String(item ?? "").trim()).filter(Boolean))];
+  if (ids.length > 25) throw new WorkflowError("TOO_MANY_COLLABORATORS", "Draft collaborator limit exceeded.", 422);
+  return ids;
+}
 
 class PostgresTransaction {
   constructor(client, organizationId) {
@@ -45,6 +65,23 @@ class PostgresTransaction {
       project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource,
       project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification,
       project.transferDate, project.sharedPlatformImpact, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy
+    ]);
+  }
+
+  async insertIntakeDraft(draft) {
+    await this.query(`INSERT INTO intake_drafts (
+      id, organization_id, status, owner_id, collaborator_ids, content, created_at, created_by, updated_at, updated_by
+    ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10)`, [
+      draft.id, this.organizationId, draft.status, draft.ownerId, JSON.stringify(draft.collaboratorIds),
+      JSON.stringify(draft.content), draft.createdAt, draft.createdBy, draft.updatedAt, draft.updatedBy
+    ]);
+  }
+
+  async updateIntakeDraft(id, draft) {
+    await this.query(`UPDATE intake_drafts
+      SET collaborator_ids = $3::jsonb, content = $4::jsonb, updated_at = $5, updated_by = $6
+      WHERE organization_id = $1 AND id = $2`, [
+      this.organizationId, id, JSON.stringify(draft.collaboratorIds), JSON.stringify(draft.content), draft.updatedAt, draft.updatedBy
     ]);
   }
 
@@ -190,6 +227,21 @@ export class PostgresWorkflowAdapter {
   listProjects() { return this.reads.listProjects(); }
   project(id) { return this.reads.getProject(id); }
   getProjectIncludingDeleted(id) { return this.reads.getProjectIncludingDeleted(id); }
+  async intakeDraft(actor, id) {
+    const draft = await this.reads.getIntakeDraft(id);
+    this.requireDraftAccess(actor, draft);
+    return draft;
+  }
+  async listIntakeDrafts(actor) {
+    requireRole(actor, draftAllowedRoles);
+    return this.reads.listIntakeDrafts(actor.id);
+  }
+  requireDraftAccess(actor, draft) {
+    requireRole(actor, draftAllowedRoles);
+    if (draft.ownerId !== actor.id && !draft.collaboratorIds.includes(actor.id)) {
+      throw new WorkflowError("FORBIDDEN", "You do not have access to this draft.", 403);
+    }
+  }
   async projectRetentionUntil(id) {
     const result = await this.reads.query("SELECT retention_until FROM decisions WHERE organization_id = $1 AND project_id = $2 AND status = 'finalized' AND retention_until IS NOT NULL ORDER BY retention_until DESC LIMIT 1", [this.organizationId, id]);
     return result.rows?.[0]?.retention_until || null;
@@ -228,6 +280,41 @@ export class PostgresWorkflowAdapter {
     await this.actor(input.sponsorId); await this.actor(input.projectLeadId); await this.actor(input.metricOwnerId);
     if (input.receivingOwnerId) await this.actor(input.receivingOwnerId);
     if (!input.adoptionGate || !input.evidenceGate) throw new WorkflowError("GATES_UNCONFIRMED", "Adoption and evidence gates must be confirmed before submission.", 422);
+  }
+
+  async createIntakeDraft(actor, input = {}) {
+    requireRole(actor, draftAllowedRoles);
+    const id = randomUUID();
+    const timestamp = now();
+    const collaboratorIds = normalizeCollaborators(input.collaboratorIds);
+    for (const collaboratorId of collaboratorIds) await this.actor(collaboratorId);
+    const draft = {
+      id, status: stages.DRAFT, ownerId: actor.id, collaboratorIds,
+      content: normalizeDraftContent(input.content || input),
+      createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id
+    };
+    await this.transaction(async tx => {
+      await tx.insertIntakeDraft(draft);
+      await tx.appendAudit(actor.id, "intake_draft_created", "intake_draft", id, null, { status: stages.DRAFT });
+    });
+    return this.intakeDraft(actor, id);
+  }
+
+  async updateIntakeDraft(actor, id, input = {}) {
+    const draft = await this.reads.getIntakeDraft(id);
+    this.requireDraftAccess(actor, draft);
+    const collaboratorIds = Object.hasOwn(input, "collaboratorIds") ? normalizeCollaborators(input.collaboratorIds) : draft.collaboratorIds;
+    if (actor.id !== draft.ownerId && collaboratorIds.join("\0") !== draft.collaboratorIds.join("\0")) {
+      throw new WorkflowError("FORBIDDEN", "Only the draft owner can change draft collaborators.", 403);
+    }
+    for (const collaboratorId of collaboratorIds) await this.actor(collaboratorId);
+    const content = { ...draft.content, ...normalizeDraftContent(input.content || input) };
+    const timestamp = now();
+    await this.transaction(async tx => {
+      await tx.updateIntakeDraft(id, { content, collaboratorIds, updatedAt: timestamp, updatedBy: actor.id });
+      await tx.appendAudit(actor.id, "intake_draft_updated", "intake_draft", id, { updatedAt: draft.updatedAt }, { updatedAt: timestamp });
+    });
+    return this.intakeDraft(actor, id);
   }
 
   async createIntake(actor, input) {

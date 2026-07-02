@@ -75,6 +75,13 @@ export class SqliteLabsStorage {
         deleted_at TEXT, deleted_by TEXT, deletion_reason TEXT,
         FOREIGN KEY(sponsor_id) REFERENCES users(id), FOREIGN KEY(receiving_owner_id) REFERENCES users(id), FOREIGN KEY(project_lead_id) REFERENCES users(id)
       );
+      CREATE TABLE IF NOT EXISTS intake_drafts (
+        id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'Draft', owner_id TEXT NOT NULL,
+        collaborator_ids_json TEXT NOT NULL DEFAULT '[]', content_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        FOREIGN KEY(owner_id) REFERENCES users(id), FOREIGN KEY(created_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id)
+      );
+      CREATE INDEX IF NOT EXISTS intake_drafts_owner_updated_idx ON intake_drafts (owner_id, updated_at DESC);
       CREATE TABLE IF NOT EXISTS project_gates (
         project_id TEXT NOT NULL, gate_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'incomplete', evidence_link TEXT,
         completed_by TEXT, completed_at TEXT, exception_reason TEXT,
@@ -181,6 +188,29 @@ export class SqliteLabsStorage {
       FROM projects p JOIN users sponsor ON sponsor.id = p.sponsor_id LEFT JOIN users receiver ON receiver.id = p.receiving_owner_id
       JOIN users lead ON lead.id = p.project_lead_id WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC`).all();
     return rows.map(row => this.serializeProject(row));
+  }
+
+  serializeIntakeDraft(row) {
+    return {
+      id: row.id, status: row.status, ownerId: row.owner_id,
+      collaboratorIds: parse(row.collaborator_ids_json),
+      content: parse(row.content_json),
+      createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by
+    };
+  }
+
+  getIntakeDraft(id) {
+    const row = this.db.prepare("SELECT * FROM intake_drafts WHERE id = ?").get(id);
+    if (!row) throw new WorkflowError("NOT_FOUND", "Intake draft not found.", 404);
+    return this.serializeIntakeDraft(row);
+  }
+
+  listIntakeDrafts(actorId) {
+    return this.db.prepare(`SELECT * FROM intake_drafts
+      WHERE owner_id = ? OR EXISTS (
+        SELECT 1 FROM json_each(intake_drafts.collaborator_ids_json) WHERE json_each.value = ?
+      )
+      ORDER BY updated_at DESC`).all(actorId, actorId).map(row => this.serializeIntakeDraft(row));
   }
 
   serializeProject(row) {
@@ -493,6 +523,18 @@ export class SqliteLabsStorage {
       sponsor_id, receiving_owner_id, project_lead_id, risk_classification, transfer_date, shared_platform_impact, created_at, created_by, updated_at, updated_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(project.id, project.cycleId, project.title, project.stage, project.originTeam, project.users, project.potentialReach, project.problem, project.metric, project.baseline, project.target, project.metricSource, project.metricOwnerId, project.sponsorId, project.receivingOwnerId, project.projectLeadId, project.riskClassification, project.transferDate, project.sharedPlatformImpact ? 1 : 0, project.createdAt, project.createdBy, project.updatedAt, project.updatedBy);
+  }
+
+  insertIntakeDraft(draft) {
+    this.db.prepare(`INSERT INTO intake_drafts (
+      id, status, owner_id, collaborator_ids_json, content_json, created_at, created_by, updated_at, updated_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(draft.id, draft.status, draft.ownerId, json(draft.collaboratorIds), json(draft.content), draft.createdAt, draft.createdBy, draft.updatedAt, draft.updatedBy);
+  }
+
+  updateIntakeDraft(id, draft) {
+    this.db.prepare("UPDATE intake_drafts SET collaborator_ids_json = ?, content_json = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      .run(json(draft.collaboratorIds), json(draft.content), draft.updatedAt, draft.updatedBy, id);
   }
 
   updateProjectStage(id, stage, actorId, timestamp) {

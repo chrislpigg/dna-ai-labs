@@ -104,9 +104,14 @@ async function api(req, res, url) {
     requireRole(requestActor, [roles.ADMIN]);
     return respond(res, 200, { integrity: await workflow.verifyAuditIntegrity() });
   }
+  if (req.method === "GET" && path === "/api/v1/intake-drafts") return respond(res, 200, { drafts: await workflow.listIntakeDrafts(requestActor) });
+  if (req.method === "POST" && path === "/api/v1/intake-drafts") return respond(res, 201, { draft: await workflow.createIntakeDraft(requestActor, await body(req)) });
   if (req.method === "POST" && path === "/api/v1/intakes") return respond(res, 201, { project: await workflow.createIntake(requestActor, await body(req)) });
 
   let match = path.match(/^\/api\/v1\/projects\/([^/]+)\/select$/);
+  match = path.match(/^\/api\/v1\/intake-drafts\/([^/]+)$/);
+  if (req.method === "GET" && match) return respond(res, 200, { draft: await workflow.intakeDraft(requestActor, match[1]) });
+  if (req.method === "PATCH" && match) return respond(res, 200, { draft: await workflow.updateIntakeDraft(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)$/);
   if (req.method === "DELETE" && match) return respond(res, 204, await workflow.deleteProject(requestActor, match[1], (await body(req)).deletionReason));
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/restore$/);

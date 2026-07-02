@@ -23,6 +23,8 @@ test("workflow service operates through the storage port and preserves durable a
   try {
     assert.equal(storagePortMethods.includes("getActor"), true);
     assert.equal(storagePortMethods.includes("getProject"), true);
+    assert.equal(storagePortMethods.includes("insertIntakeDraft"), true);
+    assert.equal(storagePortMethods.includes("updateIntakeDraft"), true);
     assert.equal(storagePortMethods.includes("getDecision"), true);
     assert.equal(storagePortMethods.includes("appendAudit"), true);
     assert.equal(storagePortMethods.includes("transaction"), true);

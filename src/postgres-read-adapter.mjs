@@ -68,6 +68,36 @@ export class PostgresReadAdapter {
     return projects[0];
   }
 
+  serializeIntakeDraft(row) {
+    return {
+      id: row.id, status: row.status, ownerId: row.owner_id,
+      collaboratorIds: Array.isArray(row.collaborator_ids) ? row.collaborator_ids : [],
+      content: row.content && typeof row.content === "object" ? row.content : {},
+      createdAt: dateValue(row.created_at), createdBy: row.created_by,
+      updatedAt: dateValue(row.updated_at), updatedBy: row.updated_by
+    };
+  }
+
+  async getIntakeDraft(id) {
+    const result = await this.query(
+      "SELECT * FROM intake_drafts WHERE organization_id = $1 AND id = $2",
+      [this.organizationId, requiredText(id, "draft id")]
+    );
+    const row = asRows(result)[0];
+    if (!row) throw new WorkflowError("NOT_FOUND", "Intake draft not found.", 404);
+    return this.serializeIntakeDraft(row);
+  }
+
+  async listIntakeDrafts(actorId) {
+    const result = await this.query(
+      `SELECT * FROM intake_drafts
+       WHERE organization_id = $1 AND (owner_id = $2 OR collaborator_ids ? $2)
+       ORDER BY updated_at DESC`,
+      [this.organizationId, requiredText(actorId, "actor id")]
+    );
+    return asRows(result).map(row => this.serializeIntakeDraft(row));
+  }
+
   async listProjects({ projectId, includeDeleted = false } = {}) {
     const projectFilter = projectId ? " AND p.id = $2" : "";
     const projectValues = projectId ? [this.organizationId, projectId] : [this.organizationId];
