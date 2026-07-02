@@ -226,4 +226,13 @@ Started: 2026-06-20
 - Files changed: `migrations/015_role_assignments.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: keep role administration as auditable assignment metadata and explicitly block self-grants of decision authority; authorization policy should not rely on client-visible role controls.
 
+## 2026-07-02 — US-027 Define directory integration interface
+
+- Added a vendor-neutral directory adapter contract for lookup and search results with active status, display identity, organization, manager, and verification timestamp metadata.
+- Added a disabled adapter for absent configuration, bounded timeout behavior, sanitized provider-failure errors, and an active-person validation helper that never treats unknown, inactive, timed-out, or unavailable directory results as valid.
+- Added adapter contract tests for normalization, missing configuration, provider failures, timeout behavior, inactive users, and unknown users.
+- Verification: `npm test` (82 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `src/directory-adapter.mjs`, `test/directory-adapter.test.mjs`, `package.json`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: directory lookups must fail closed at the adapter boundary; downstream workflow should consume normalized active-person metadata, not provider-specific payloads or silent fallbacks.
+
 ---
