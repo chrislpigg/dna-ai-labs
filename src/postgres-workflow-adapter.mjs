@@ -11,6 +11,7 @@ import { defaultDeliveryKitItems, normalizeDeliveryKitInput, normalizeDeliveryKi
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifier.mjs";
 import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
+import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -123,6 +124,25 @@ function normalizeSingleCollaborator(input = {}) {
 
 function draftCollaboratorIds(draft) {
   return Array.isArray(draft.collaborators) ? draft.collaborators.map(collaborator => collaborator.userId) : (draft.collaboratorIds || []);
+}
+
+function normalizeCalendarEventInput(input = {}, project) {
+  const eventType = String(input.eventType ?? "").trim();
+  if (!["decision_meeting", "follow_up"].includes(eventType)) throw new WorkflowError("INVALID_CALENDAR_EVENT_TYPE", "Calendar event type is invalid.", 422);
+  if (eventType === "decision_meeting" && !project.pendingDecision) throw new WorkflowError("DECISION_EVENT_REQUIRED", "A decision meeting requires an open decision request.", 409);
+  if (eventType === "follow_up" && project.handoff?.status !== "accepted") throw new WorkflowError("FOLLOW_UP_HANDOFF_REQUIRED", "A follow-up event requires an accepted handoff.", 409);
+  const scheduledFor = String(input.scheduledFor ?? (eventType === "follow_up" ? project.handoff?.followUpDate : "") ?? "").trim();
+  const scheduledDate = new Date(scheduledFor.includes("T") ? scheduledFor : `${scheduledFor}T12:00:00`);
+  if (!scheduledFor || Number.isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) throw new WorkflowError("INVALID_CALENDAR_EVENT_DATE", "Calendar event date must be in the future.", 422);
+  const decisionId = eventType === "decision_meeting" ? project.pendingDecision.id : null;
+  const eventKey = eventType === "decision_meeting" ? `decision_meeting:${decisionId}` : "follow_up";
+  return {
+    eventType,
+    eventKey,
+    decisionId,
+    scheduledFor,
+    externalUrl: String(input.externalUrl ?? input.eventUrl ?? "").trim() || null
+  };
 }
 
 const cycleStatuses = Object.freeze(["planned", "active", "closed"]);
@@ -402,6 +422,38 @@ class PostgresTransaction {
     ]);
   }
 
+  async listProjectCalendarEvents(projectId) {
+    const result = await this.query(`SELECT project_id AS "projectId", event_key AS "eventKey", event_type AS "eventType",
+      decision_id AS "decisionId", provider, external_ref AS "externalRef", external_url AS "externalUrl",
+      scheduled_for AS "scheduledFor", last_verified_at AS "lastVerifiedAt", created_by AS "createdBy", created_at AS "createdAt",
+      updated_by AS "updatedBy", updated_at AS "updatedAt"
+      FROM project_calendar_events WHERE organization_id = $1 AND project_id = $2 ORDER BY scheduled_for, event_key`, [this.organizationId, projectId]);
+    return result.rows || [];
+  }
+
+  async getProjectCalendarEvent(projectId, eventKey) {
+    const result = await this.query(`SELECT project_id AS "projectId", event_key AS "eventKey", event_type AS "eventType",
+      decision_id AS "decisionId", provider, external_ref AS "externalRef", external_url AS "externalUrl",
+      scheduled_for AS "scheduledFor", last_verified_at AS "lastVerifiedAt", created_by AS "createdBy", created_at AS "createdAt",
+      updated_by AS "updatedBy", updated_at AS "updatedAt"
+      FROM project_calendar_events WHERE organization_id = $1 AND project_id = $2 AND event_key = $3`, [this.organizationId, projectId, eventKey]);
+    return result.rows?.[0] || null;
+  }
+
+  async upsertProjectCalendarEvent(event) {
+    await this.query(`INSERT INTO project_calendar_events (
+        project_id, organization_id, event_key, event_type, decision_id, provider, external_ref, external_url,
+        scheduled_for, last_verified_at, created_by, created_at, updated_by, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      ON CONFLICT (organization_id, project_id, event_key) DO UPDATE SET provider = EXCLUDED.provider,
+        external_ref = EXCLUDED.external_ref, external_url = EXCLUDED.external_url,
+        scheduled_for = EXCLUDED.scheduled_for, last_verified_at = EXCLUDED.last_verified_at,
+        updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at`, [
+      event.projectId, this.organizationId, event.eventKey, event.eventType, event.decisionId, event.provider, event.externalRef,
+      event.externalUrl, event.scheduledFor, event.lastVerifiedAt, event.createdBy, event.createdAt, event.updatedBy, event.updatedAt
+    ]);
+  }
+
   async listFellowAssignments(filters = {}) {
     const clauses = [];
     const params = [this.organizationId];
@@ -528,7 +580,7 @@ class PostgresTransaction {
 
 /** Authoritative PostgreSQL workflow adapter. Every mutation includes its audit event in one transaction. */
 export class PostgresWorkflowAdapter {
-  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter() } = {}) {
+  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter() } = {}) {
     if (!queryable || typeof queryable.query !== "function" || typeof queryable.connect !== "function") throw new TypeError("A PostgreSQL pool with connect() is required.");
     this.queryable = queryable;
     this.organizationId = requiredText(organizationId, "organizationId");
@@ -537,6 +589,7 @@ export class PostgresWorkflowAdapter {
     this.directory = directoryAdapter;
     this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
     this.workTracking = workTrackingAdapter;
+    this.calendar = calendarAdapter;
   }
 
   async transaction(work) {
@@ -1120,6 +1173,46 @@ export class PostgresWorkflowAdapter {
     return this.transaction(tx => tx.getProjectWorkItem(projectId));
   }
 
+  async listCalendarEvents(actor, projectId) {
+    requireRole(actor, Object.values(roles));
+    await this.project(projectId);
+    return this.transaction(tx => tx.listProjectCalendarEvents(projectId));
+  }
+
+  async scheduleCalendarEvent(actor, projectId, input = {}) {
+    await this.requireFeatureEnabled("calendar_integration");
+    const project = await this.project(projectId);
+    requireRole(actor, [roles.PROJECT_LEAD, roles.LAB_LEAD, roles.PLATFORM_REVIEWER, roles.EXECUTIVE_SPONSOR, roles.RECEIVING_OWNER, roles.ADMIN]);
+    if (actor.role === roles.PROJECT_LEAD && project.projectLead.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Project leads can schedule calendar events only for their assigned projects.", 403);
+    if (actor.role === roles.RECEIVING_OWNER && project.receivingOwner?.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Receiving owners can schedule calendar events only for their assigned projects.", 403);
+    const event = normalizeCalendarEventInput(input, project);
+    const before = await this.transaction(tx => tx.getProjectCalendarEvent(projectId, event.eventKey));
+    const verified = await this.calendar.createOrValidate({ ...event, eventUrl: event.externalUrl }, { projectId, actorId: actor.id, decisionId: event.decisionId });
+    const timestamp = now();
+    const next = {
+      projectId,
+      eventKey: event.eventKey,
+      eventType: event.eventType,
+      decisionId: event.decisionId,
+      provider: verified.provider,
+      externalRef: verified.externalRef,
+      externalUrl: verified.externalUrl,
+      scheduledFor: verified.scheduledFor,
+      lastVerifiedAt: verified.lastVerifiedAt,
+      createdBy: before?.createdBy || actor.id,
+      createdAt: before?.createdAt || timestamp,
+      updatedBy: actor.id,
+      updatedAt: timestamp
+    };
+    await this.transaction(async tx => {
+      await tx.upsertProjectCalendarEvent(next);
+      await tx.appendAudit(actor.id, "calendar_event_scheduled", "project_calendar_event", `${projectId}:${event.eventKey}`, before, {
+        eventType: next.eventType, decisionId: next.decisionId, externalRef: next.externalRef, scheduledFor: next.scheduledFor, lastVerifiedAt: next.lastVerifiedAt
+      });
+    });
+    return this.transaction(tx => tx.getProjectCalendarEvent(projectId, event.eventKey));
+  }
+
   async listFellowAssignments(actor, filters = {}) {
     requireRole(actor, Object.values(roles));
     return this.transaction(tx => tx.listFellowAssignments({
@@ -1289,6 +1382,6 @@ export class PostgresWorkflowAdapter {
   }
 }
 
-export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, PoolConstructor = Pool } = {}) {
-  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter });
+export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, PoolConstructor = Pool } = {}) {
+  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter });
 }

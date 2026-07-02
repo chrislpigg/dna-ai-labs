@@ -8,6 +8,7 @@ import { enrichProjectDirectoryContextSync } from "./directory-context.mjs";
 import { normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
+import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -149,14 +150,34 @@ function draftCollaboratorIds(draft) {
   return Array.isArray(draft.collaborators) ? draft.collaborators.map(collaborator => collaborator.userId) : (draft.collaboratorIds || []);
 }
 
+function normalizeCalendarEventInput(input = {}, project) {
+  const eventType = String(input.eventType ?? "").trim();
+  if (!["decision_meeting", "follow_up"].includes(eventType)) throw new WorkflowError("INVALID_CALENDAR_EVENT_TYPE", "Calendar event type is invalid.", 422);
+  if (eventType === "decision_meeting" && !project.pendingDecision) throw new WorkflowError("DECISION_EVENT_REQUIRED", "A decision meeting requires an open decision request.", 409);
+  if (eventType === "follow_up" && project.handoff?.status !== "accepted") throw new WorkflowError("FOLLOW_UP_HANDOFF_REQUIRED", "A follow-up event requires an accepted handoff.", 409);
+  const scheduledFor = String(input.scheduledFor ?? (eventType === "follow_up" ? project.handoff?.followUpDate : "") ?? "").trim();
+  const scheduledDate = new Date(scheduledFor.includes("T") ? scheduledFor : `${scheduledFor}T12:00:00`);
+  if (!scheduledFor || Number.isNaN(scheduledDate.getTime()) || scheduledDate <= new Date()) throw new WorkflowError("INVALID_CALENDAR_EVENT_DATE", "Calendar event date must be in the future.", 422);
+  const decisionId = eventType === "decision_meeting" ? project.pendingDecision.id : null;
+  const eventKey = eventType === "decision_meeting" ? `decision_meeting:${decisionId}` : "follow_up";
+  return {
+    eventType,
+    eventKey,
+    decisionId,
+    scheduledFor,
+    externalUrl: String(input.externalUrl ?? input.eventUrl ?? "").trim() || null
+  };
+}
+
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
-  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter() } = {}) {
+  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter() } = {}) {
     this.storage = assertStoragePort(storage);
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
     this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
     this.workTracking = workTrackingAdapter;
+    this.calendar = calendarAdapter;
   }
 
   actor(id) { return this.storage.getActor(id); }
@@ -761,6 +782,46 @@ export class WorkflowService {
       });
     });
     return this.storage.getProjectWorkItem(projectId);
+  }
+
+  listCalendarEvents(actor, projectId) {
+    requireRole(actor, Object.values(roles));
+    this.project(projectId);
+    return this.storage.listProjectCalendarEvents(projectId);
+  }
+
+  scheduleCalendarEvent(actor, projectId, input = {}) {
+    this.requireFeatureEnabled("calendar_integration");
+    const project = this.project(projectId);
+    requireRole(actor, [roles.PROJECT_LEAD, roles.LAB_LEAD, roles.PLATFORM_REVIEWER, roles.EXECUTIVE_SPONSOR, roles.RECEIVING_OWNER, roles.ADMIN]);
+    if (actor.role === roles.PROJECT_LEAD && project.projectLead.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Project leads can schedule calendar events only for their assigned projects.", 403);
+    if (actor.role === roles.RECEIVING_OWNER && project.receivingOwner?.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Receiving owners can schedule calendar events only for their assigned projects.", 403);
+    const event = normalizeCalendarEventInput(input, project);
+    const before = this.storage.getProjectCalendarEvent(projectId, event.eventKey);
+    const verified = this.calendar.createOrValidateSync({ ...event, eventUrl: event.externalUrl }, { projectId, actorId: actor.id, decisionId: event.decisionId });
+    const timestamp = now();
+    const next = {
+      projectId,
+      eventKey: event.eventKey,
+      eventType: event.eventType,
+      decisionId: event.decisionId,
+      provider: verified.provider,
+      externalRef: verified.externalRef,
+      externalUrl: verified.externalUrl,
+      scheduledFor: verified.scheduledFor,
+      lastVerifiedAt: verified.lastVerifiedAt,
+      createdBy: before?.createdBy || actor.id,
+      createdAt: before?.createdAt || timestamp,
+      updatedBy: actor.id,
+      updatedAt: timestamp
+    };
+    this.storage.transaction(() => {
+      this.storage.upsertProjectCalendarEvent(next);
+      this.storage.appendAudit(actor.id, "calendar_event_scheduled", "project_calendar_event", `${projectId}:${event.eventKey}`, before, {
+        eventType: next.eventType, decisionId: next.decisionId, externalRef: next.externalRef, scheduledFor: next.scheduledFor, lastVerifiedAt: next.lastVerifiedAt
+      });
+    });
+    return this.storage.getProjectCalendarEvent(projectId, event.eventKey);
   }
 
   listFellowAssignments(actor, filters = {}) {

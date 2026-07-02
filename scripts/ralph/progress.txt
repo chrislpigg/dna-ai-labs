@@ -328,4 +328,13 @@ Started: 2026-06-20
 - Files changed: `migrations/019_project_work_items.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/work-tracking-adapter.mjs`, `src/workflow-service.mjs`, `package.json`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/work-tracking-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: external work state should be a verified reference and status snapshot, not a mirrored work-tracker record or issue payload.
 
+## 2026-07-02 — US-038 Add calendar integration adapter
+
+- Added a calendar adapter boundary for creating provider events or validating existing approved event links, with timeout and fail-closed provider errors.
+- Added project calendar-event metadata for decision meetings and follow-ups, storing provider, external reference, approved URL, scheduled date, and last verification time only.
+- Added feature-gated scheduling/list API and workflow mutations with state guards for open decision requests and accepted handoffs, plus durable audit events.
+- Verification: `npm test` (112 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/020_project_calendar_events.sql`, `server.mjs`, `src/calendar-adapter.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `package.json`, `test/calendar-adapter.test.mjs`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: calendar integration state should be an approved event reference plus scheduled time; provider payloads and attendee details stay outside the command center.
+
 ---

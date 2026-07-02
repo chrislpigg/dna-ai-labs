@@ -155,6 +155,17 @@ export class SqliteLabsStorage {
         FOREIGN KEY(linked_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
         CHECK(external_status IN ('unknown', 'not_started', 'in_progress', 'blocked', 'done'))
       );
+      CREATE TABLE IF NOT EXISTS project_calendar_events (
+        project_id TEXT NOT NULL, event_key TEXT NOT NULL, event_type TEXT NOT NULL, decision_id TEXT,
+        provider TEXT NOT NULL, external_ref TEXT NOT NULL, external_url TEXT, scheduled_for TEXT NOT NULL,
+        last_verified_at TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY(project_id, event_key),
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY(decision_id) REFERENCES decisions(id) ON DELETE SET NULL,
+        FOREIGN KEY(created_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
+        CHECK(event_type IN ('decision_meeting', 'follow_up'))
+      );
       CREATE TABLE IF NOT EXISTS fellow_assignments (
         id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, project_id TEXT NOT NULL, fellow_id TEXT NOT NULL, assignment_role TEXT NOT NULL,
         capacity_units INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'proposed', manager_id TEXT NOT NULL,
@@ -359,6 +370,7 @@ export class SqliteLabsStorage {
     const reviews = this.db.prepare("SELECT review_type AS reviewType, status, evidence_link AS evidenceLink, completed_by AS completedBy, completed_at AS completedAt, exception_reason AS exceptionReason, artifact_verification_status AS artifactVerificationStatus, artifact_verified_at AS artifactVerifiedAt, artifact_verification_method AS artifactVerificationMethod FROM project_reviews WHERE project_id = ? ORDER BY review_type").all(row.id);
     const deliveryKit = this.listDeliveryKitItems(row.id);
     const workItem = this.getProjectWorkItem(row.id);
+    const calendarEvents = this.listProjectCalendarEvents(row.id);
     const reviewsComplete = reviewRequirements.every(type => reviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status)));
     const decision = this.db.prepare("SELECT id, outcome, rationale, status, requested_by AS requestedBy, requested_at AS requestedAt FROM decisions WHERE project_id = ? AND status = 'requested' ORDER BY requested_at DESC LIMIT 1").get(row.id);
     const decisionApprovals = decision ? this.db.prepare("SELECT approver_id AS approverId, approver_role AS approverRole, result, comment, created_at AS createdAt FROM approvals WHERE decision_id = ? ORDER BY created_at").all(decision.id) : [];
@@ -372,7 +384,7 @@ export class SqliteLabsStorage {
       adoptionAcknowledged: Boolean(row.adoption_acknowledged_at), adoptionAcknowledgedAt: row.adoption_acknowledged_at,
       cycleId: row.cycle_id, capacityUnits: row.capacity_units || 1,
       triageStatus: row.triage_status || "open", informationRequestedBy: row.information_requested_by, informationRequestedAt: row.information_requested_at,
-      sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, deliveryKit, workItem, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
+      sharedPlatformImpact: Boolean(row.shared_platform_impact), extensionCount: row.extension_count, gates, evidence, reviews, reviewRequirements, reviewsComplete, deliveryKit, workItem, calendarEvents, decisionHistory, pendingDecision, handoff: handoff ? { ...handoff, onboardingAcknowledged: Boolean(handoff.onboardingAcknowledged) } : null,
       createdAt: row.created_at, createdBy: row.created_by, updatedAt: row.updated_at, updatedBy: row.updated_by,
       deletedAt: row.deleted_at, deletedBy: row.deleted_by, deletionReason: row.deletion_reason
     };
@@ -940,6 +952,50 @@ export class SqliteLabsStorage {
         updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
       .run(item.projectId, item.provider, item.externalRef, item.externalUrl, item.externalStatus, item.lastVerifiedAt,
         item.linkedBy, item.linkedAt, item.updatedBy, item.updatedAt);
+  }
+
+  serializeProjectCalendarEvent(row) {
+    return row ? {
+      projectId: row.project_id,
+      eventKey: row.event_key,
+      eventType: row.event_type,
+      decisionId: row.decision_id,
+      provider: row.provider,
+      externalRef: row.external_ref,
+      externalUrl: row.external_url,
+      scheduledFor: row.scheduled_for,
+      lastVerifiedAt: row.last_verified_at,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      updatedBy: row.updated_by,
+      updatedAt: row.updated_at
+    } : null;
+  }
+
+  listProjectCalendarEvents(projectId) {
+    return this.db.prepare(`SELECT project_id, event_key, event_type, decision_id, provider, external_ref, external_url,
+      scheduled_for, last_verified_at, created_by, created_at, updated_by, updated_at
+      FROM project_calendar_events WHERE project_id = ? ORDER BY scheduled_for, event_key`).all(projectId)
+      .map(row => this.serializeProjectCalendarEvent(row));
+  }
+
+  getProjectCalendarEvent(projectId, eventKey) {
+    const row = this.db.prepare(`SELECT project_id, event_key, event_type, decision_id, provider, external_ref, external_url,
+      scheduled_for, last_verified_at, created_by, created_at, updated_by, updated_at
+      FROM project_calendar_events WHERE project_id = ? AND event_key = ?`).get(projectId, eventKey);
+    return this.serializeProjectCalendarEvent(row);
+  }
+
+  upsertProjectCalendarEvent(event) {
+    this.db.prepare(`INSERT INTO project_calendar_events (
+        project_id, event_key, event_type, decision_id, provider, external_ref, external_url,
+        scheduled_for, last_verified_at, created_by, created_at, updated_by, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, event_key) DO UPDATE SET provider = excluded.provider, external_ref = excluded.external_ref,
+        external_url = excluded.external_url, scheduled_for = excluded.scheduled_for, last_verified_at = excluded.last_verified_at,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+      .run(event.projectId, event.eventKey, event.eventType, event.decisionId, event.provider, event.externalRef,
+        event.externalUrl, event.scheduledFor, event.lastVerifiedAt, event.createdBy, event.createdAt, event.updatedBy, event.updatedAt);
   }
 
   serializeFellowAssignment(row) {

@@ -20,10 +20,21 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("project calendar event migration stores scheduled approved event references", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "020_project_calendar_events");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS project_calendar_events/);
+  assert.match(migration.sql, /event_type TEXT NOT NULL/);
+  assert.match(migration.sql, /scheduled_for TIMESTAMPTZ NOT NULL/);
+  assert.match(migration.sql, /event_type IN \('decision_meeting', 'follow_up'\)/);
+  assert.match(migration.sql, /project_calendar_events_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /project_calendar_events_schedule_idx ON project_calendar_events \(organization_id, event_type, scheduled_for\)/);
 });
 
 test("project work item migration stores tenant-scoped work-tracking metadata", () => {

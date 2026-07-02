@@ -8,6 +8,7 @@ import { WorkflowError, outcomes, stages } from "../src/workflow-policy.mjs";
 import { DirectoryAdapter } from "../src/directory-adapter.mjs";
 import { ArtifactVerifier } from "../src/artifact-verifier.mjs";
 import { WorkTrackingAdapter } from "../src/work-tracking-adapter.mjs";
+import { CalendarAdapter } from "../src/calendar-adapter.mjs";
 
 function createStore(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dna-ai-labs-"));
@@ -394,6 +395,73 @@ test("work tracking is feature-gated, provider-verified, refreshed, and audited"
     assert.equal(refreshed.lastVerifiedAt, "2026-07-02T01:00:00.000Z");
     assert.equal(store.auditEvents(admin).some(event => event.action === "work_item_created" && event.entityId === project.id), true);
     assert.equal(store.auditEvents(admin).some(event => event.action === "work_item_refreshed" && event.entityId === project.id), true);
+  } finally { dispose(); }
+});
+
+test("calendar events are feature-gated, provider-verified, and audited", () => {
+  let providerFails = true;
+  const calendarAdapter = new CalendarAdapter({
+    approvedOrigins: ["https://calendar.example"],
+    validateEventSync: ({ eventType, scheduledFor, externalUrl }) => {
+      if (providerFails) throw new Error("calendar unavailable");
+      return {
+        provider: "calendar",
+        externalRef: "event-decision",
+        externalUrl,
+        scheduledFor,
+        lastVerifiedAt: "2026-07-02T00:00:00.000Z",
+        eventType
+      };
+    },
+    createEventSync: ({ eventType, scheduledFor }) => ({
+      provider: "calendar",
+      externalRef: "event-follow-up",
+      externalUrl: "https://calendar.example/events/follow-up",
+      scheduledFor,
+      lastVerifiedAt: "2026-07-02T01:00:00.000Z",
+      eventType
+    })
+  });
+  const { store, dispose } = createStore({ calendarAdapter });
+  try {
+    const admin = store.actor("admin");
+    const lead = store.actor("accessibility-lead");
+    const labLead = store.actor("lab-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+
+    expectWorkflowError(() => store.scheduleCalendarEvent(labLead, project.id, { eventType: "decision_meeting", scheduledFor: "2026-07-10T16:00:00.000Z" }), "FEATURE_DISABLED");
+    store.setFeatureFlag(admin, "calendar_integration", { enabled: true });
+    expectWorkflowError(() => store.scheduleCalendarEvent(labLead, project.id, { eventType: "decision_meeting", scheduledFor: "2026-07-10T16:00:00.000Z" }), "DECISION_EVENT_REQUIRED");
+
+    store.acknowledgeAdoption(store.actor("receiving-owner"), project.id);
+    store.selectProject(labLead, project.id);
+    store.startIncubation(labLead, project.id);
+    store.requestDecision(lead, project.id, { outcome: outcomes.SCALE, rationale: "Schedule decision review." });
+    expectWorkflowError(() => store.scheduleCalendarEvent(labLead, project.id, { eventType: "decision_meeting", scheduledFor: "2026-07-10T16:00:00.000Z", externalUrl: "https://external.example/events/decision" }), "UNAPPROVED_CALENDAR_EVENT_LINK");
+    expectWorkflowError(() => store.scheduleCalendarEvent(labLead, project.id, { eventType: "decision_meeting", scheduledFor: "2026-07-10T16:00:00.000Z", externalUrl: "https://calendar.example/events/decision" }), "CALENDAR_UNAVAILABLE");
+    assert.equal(store.project(project.id).calendarEvents.length, 0);
+
+    providerFails = false;
+    const meeting = store.scheduleCalendarEvent(labLead, project.id, { eventType: "decision_meeting", scheduledFor: "2026-07-10T16:00:00.000Z", externalUrl: "https://calendar.example/events/decision" });
+    assert.equal(meeting.eventType, "decision_meeting");
+    assert.equal(meeting.externalRef, "event-decision");
+
+    store.acknowledgeAdoption(store.actor("receiving-owner"), "accessibility-agent");
+    const transferProject = store.selectProject(labLead, "accessibility-agent");
+    store.startIncubation(labLead, transferProject.id);
+    store.requestDecision(lead, transferProject.id, { outcome: outcomes.TRANSFER, rationale: "Schedule receiving-owner follow-up." });
+    store.acceptHandoff(store.actor("receiving-owner"), transferProject.id, {
+      adoptionPlanLink: "https://intranet.example/adoption",
+      supportEndDate: "2026-12-18",
+      followUpDate: "2026-08-01",
+      onboardingAcknowledged: true
+    });
+    const followUp = store.scheduleCalendarEvent(store.actor("receiving-owner"), transferProject.id, { eventType: "follow_up" });
+    assert.equal(followUp.eventType, "follow_up");
+    assert.equal(followUp.scheduledFor, "2026-08-01");
+    assert.equal(store.project(transferProject.id).calendarEvents.some(event => event.eventType === "follow_up"), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "calendar_event_scheduled" && event.entityId === `${project.id}:decision_meeting:${store.project(project.id).pendingDecision.id}`), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "calendar_event_scheduled" && event.entityId === `${transferProject.id}:follow_up`), true);
   } finally { dispose(); }
 });
 

@@ -166,6 +166,9 @@ async function api(req, res, url) {
   if (req.method === "POST" && match) return respond(res, 200, { workItem: await workflow.createOrLinkWorkItem(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/work-item\/refresh$/);
   if (req.method === "POST" && match) return respond(res, 200, { workItem: await workflow.refreshWorkItem(requestActor, match[1]) });
+  match = path.match(/^\/api\/v1\/projects\/([^/]+)\/calendar-events$/);
+  if (req.method === "GET" && match) return respond(res, 200, { events: await workflow.listCalendarEvents(requestActor, match[1]) });
+  if (req.method === "POST" && match) return respond(res, 200, { event: await workflow.scheduleCalendarEvent(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/reviews\/([a-z_]+)$/);
   if (req.method === "PUT" && match) return respond(res, 200, { project: await workflow.setReview(requestActor, match[1], match[2], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/gates\/([a-z_]+)$/);
