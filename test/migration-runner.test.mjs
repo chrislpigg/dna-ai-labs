@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts", "022_notification_outbox", "023_notification_worker_state"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts", "022_notification_outbox", "023_notification_worker_state", "024_project_follow_ups"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -50,6 +50,18 @@ test("notification worker migration adds lease, idempotency, and sent-state meta
   assert.match(migration.sql, /ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ/);
   assert.match(migration.sql, /notification_outbox_idempotency_unique/);
   assert.match(migration.sql, /notification_outbox_worker_due_idx/);
+});
+
+test("project follow-up migration stores post-transfer review tracking metadata", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "024_project_follow_ups");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS project_follow_ups/);
+  assert.match(migration.sql, /due_on DATE NOT NULL/);
+  assert.match(migration.sql, /status TEXT NOT NULL DEFAULT 'pending'/);
+  assert.match(migration.sql, /reminder_notification_id TEXT/);
+  assert.match(migration.sql, /status IN \('pending', 'completed', 'cancelled'\)/);
+  assert.match(migration.sql, /project_follow_ups_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /project_follow_ups_due_idx ON project_follow_ups \(organization_id, status, due_on\)/);
 });
 
 test("integration attempts migration stores non-sensitive health metadata", () => {

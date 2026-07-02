@@ -35,6 +35,7 @@ test("notification templates render minimal metadata-only workflow messages", ()
   assert.match(rendered.body, /complete/);
   assert.equal(rendered.body.includes("Sensitive rationale"), false);
   assert.equal(rendered.body.includes("https://intranet.example"), false);
+  assert.equal(renderNotificationTemplate({ ...notification, notificationType: "follow_up_due", payload: { projectId: "project-1", dueOn: "2026-08-01" } }).subject, "Follow-up due");
 });
 
 test("email notification adapter is feature-gated and passes idempotency keys", async () => {

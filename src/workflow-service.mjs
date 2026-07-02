@@ -23,6 +23,7 @@ import {
 } from "./workflow-policy.mjs";
 
 const now = () => new Date().toISOString();
+const followUpReminderAt = dueOn => `${dueOn}T09:00:00.000Z`;
 export const deletionReasons = Object.freeze(["duplicate", "withdrawn", "created_in_error", "governance_removal"]);
 const draftAllowedRoles = [roles.EMPLOYEE, roles.SUBMITTER, roles.PROJECT_LEAD, roles.LAB_LEAD, roles.ADMIN];
 
@@ -980,11 +981,27 @@ export class WorkflowService {
     this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
     const timestamp = now(); const existing = this.storage.getHandoff(projectId);
     if (existing?.status === "accepted") throw new WorkflowError("HANDOFF_ALREADY_ACCEPTED", "This handoff has already been accepted.", 409);
+    const reminderNotificationId = randomUUID();
     this.storage.transaction(() => {
       this.storage.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp, ...artifactVerificationFields(verification) });
+      this.storage.upsertProjectFollowUp({ projectId, dueOn: input.followUpDate, status: "pending", reminderNotificationId, createdAt: timestamp, createdBy: actor.id, completedAt: null, completedBy: null });
       for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) this.storage.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
       this.storage.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, artifactVerificationStatus: verification.status });
+      this.storage.appendAudit(actor.id, "follow_up_created", "project_follow_up", projectId, null, { projectId, dueOn: input.followUpDate, status: "pending" });
       this.enqueueNotification(project.projectLead?.id, "handoff_accepted", "handoff", projectId, { projectId, followUpDate: input.followUpDate }, timestamp);
+      this.storage.insertNotificationOutbox({
+        id: reminderNotificationId,
+        recipientId: actor.id,
+        notificationType: "follow_up_due",
+        state: "pending",
+        relatedEntityType: "project_follow_up",
+        relatedEntityId: projectId,
+        attemptCount: 0,
+        payload: { projectId, dueOn: input.followUpDate },
+        createdAt: timestamp,
+        availableAt: followUpReminderAt(input.followUpDate),
+        lastErrorCode: null
+      });
     });
     return this.project(projectId);
   }

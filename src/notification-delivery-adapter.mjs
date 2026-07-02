@@ -24,6 +24,10 @@ const notificationCopy = Object.freeze({
   follow_up_scheduled: {
     subject: "Follow-up scheduled",
     body: notification => `A follow-up is scheduled for ${notification.payload?.scheduledFor || "the configured date"}. Project: ${notification.payload?.projectId || notification.relatedEntityId}.`
+  },
+  follow_up_due: {
+    subject: "Follow-up due",
+    body: notification => `A post-transfer follow-up is due on ${notification.payload?.dueOn || "the configured date"}. Project: ${notification.payload?.projectId || notification.relatedEntityId}.`
   }
 });
 

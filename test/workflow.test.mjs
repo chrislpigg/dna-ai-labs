@@ -540,6 +540,46 @@ test("notification outbox writes roll back with their business mutation", () => 
   } finally { dispose(); }
 });
 
+test("handoff acceptance creates a tracked follow-up and scheduled reminder", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    const labLead = store.actor("lab-lead");
+    const lead = store.actor("accessibility-lead");
+    const receivingOwner = store.actor("receiving-owner");
+    store.acknowledgeAdoption(receivingOwner, "accessibility-agent");
+    const selected = store.selectProject(labLead, "accessibility-agent");
+    store.startIncubation(labLead, selected.id);
+    store.requestDecision(lead, selected.id, { outcome: outcomes.TRANSFER, rationale: "Schedule adoption follow-up." });
+    store.acceptHandoff(receivingOwner, selected.id, {
+      adoptionPlanLink: "https://intranet.example/adoption",
+      supportEndDate: "2026-12-18",
+      followUpDate: "2026-08-01",
+      onboardingAcknowledged: true
+    });
+
+    const project = store.project(selected.id);
+    assert.equal(project.followUp.projectId, selected.id);
+    assert.equal(project.followUp.dueOn, "2026-08-01");
+    assert.equal(project.followUp.status, "pending");
+    assert.equal(project.followUp.derivedStatus, "pending");
+
+    const reminder = store.notificationOutbox(admin).find(notification => notification.notificationType === "follow_up_due" && notification.relatedEntityId === selected.id);
+    assert.ok(reminder);
+    assert.equal(reminder.recipientId, "receiving-owner");
+    assert.equal(reminder.relatedEntityType, "project_follow_up");
+    assert.equal(reminder.availableAt, "2026-08-01T09:00:00.000Z");
+    assert.deepEqual(reminder.payload, { projectId: selected.id, dueOn: "2026-08-01" });
+    assert.equal(store.auditEvents(admin).some(event => event.action === "follow_up_created" && event.entityId === selected.id), true);
+
+    store.storage.db.prepare("UPDATE project_follow_ups SET due_on = ? WHERE project_id = ?").run("2020-01-01", selected.id);
+    const overdue = store.project(selected.id).followUp;
+    assert.equal(overdue.status, "pending");
+    assert.equal(overdue.derivedStatus, "overdue");
+    assert.equal(overdue.completedAt, null);
+  } finally { dispose(); }
+});
+
 test("integration health is admin-only and excludes sensitive provider payloads", () => {
   const workTrackingAdapter = new WorkTrackingAdapter({
     approvedOrigins: ["https://tracker.example"],

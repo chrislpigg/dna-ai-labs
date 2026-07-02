@@ -383,3 +383,12 @@ Started: 2026-06-20
 - Verification: `npm test` (126 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `src/notification-delivery-adapter.mjs`, `test/notification-delivery-adapter.test.mjs`, `package.json`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: notification templates should be derived from event metadata, not from project narrative fields or provider payloads; delivery adapters should make the absent-provider path explicit instead of silently dropping work.
+
+## 2026-07-02 — US-044 Schedule post-transfer follow-ups
+
+- Added durable project follow-up records created at handoff acceptance with due date, lifecycle status, creator metadata, and reminder notification reference.
+- Handoff acceptance now queues a `follow_up_due` notification for the receiving owner at the configured follow-up date while preserving the existing handoff and delivery-gate transaction.
+- Project reads expose follow-up metadata with a derived `overdue` status when the due date passes, without changing the durable pending status or silently completing the review.
+- Verification: `npm test` (128 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/024_project_follow_ups.sql`, `src/labs-store.mjs`, `src/notification-delivery-adapter.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/notification-delivery-adapter.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/storage-port.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: overdue is a view of time against an open follow-up, not a lifecycle transition; closing a post-transfer review should remain an explicit future mutation.

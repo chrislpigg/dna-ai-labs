@@ -55,6 +55,8 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
     await tx.upsertProjectCalendarEvent({ projectId: "project-1", eventKey: "decision_meeting:decision-1", eventType: "decision_meeting", decisionId: "decision-1", provider: "calendar", externalRef: "event-1", externalUrl: "https://calendar.example/events/event-1", scheduledFor: "2026-07-10T16:00:00.000Z", lastVerifiedAt: "2026-06-20T00:20:00.000Z", createdBy: "user-1", createdAt: "2026-06-20T00:20:00.000Z", updatedBy: "user-1", updatedAt: "2026-06-20T00:20:00.000Z" });
     await tx.getProjectCalendarEvent("project-1", "decision_meeting:decision-1");
     await tx.listProjectCalendarEvents("project-1");
+    await tx.upsertProjectFollowUp({ projectId: "project-1", dueOn: "2026-08-01", status: "pending", reminderNotificationId: "notification-1", createdAt: "2026-06-20T00:25:00.000Z", createdBy: "user-3", completedAt: null, completedBy: null });
+    await tx.getProjectFollowUp("project-1");
     await tx.insertFellowAssignment({ id: "fellow-1", cycleId: "cycle-1", projectId: "project-1", fellowId: "user-4", assignmentRole: "Builder", capacityUnits: 1, status: "proposed", managerId: "user-2", managerAcknowledgedAt: null, managerAcknowledgedBy: null, outcome: null, createdAt: "2026-06-20T00:00:00.000Z", createdBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
     await tx.updateFellowAssignment("fellow-1", { assignmentRole: "Builder", capacityUnits: 1, status: "active", managerId: "user-2", managerAcknowledgedAt: "2026-06-20T00:05:00.000Z", managerAcknowledgedBy: "user-2", outcome: null, updatedAt: "2026-06-20T00:05:00.000Z", updatedBy: "user-2" });
     await tx.insertDecision({ id: "decision-1", projectId: "project-1", outcome: "Scale", rationale: "Measured result", status: "requested", requestedBy: "user-1", requestedAt: "2026-06-20T00:00:00.000Z" });
@@ -67,7 +69,7 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const sql = client.calls.map(call => call.sql);
   assert.equal(sql[0], "BEGIN");
   assert.equal(sql.at(-1), "COMMIT");
-  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "integration_attempts", "notification_outbox", "evidence_entries", "project_reviews", "delivery_kit_items", "project_work_items", "project_calendar_events", "fellow_assignments", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "integration_attempts", "notification_outbox", "evidence_entries", "project_reviews", "delivery_kit_items", "project_work_items", "project_calendar_events", "project_follow_ups", "fellow_assignments", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE cycles")), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE intake_drafts")), true);
   assert.equal(sql.some(statement => statement.includes("target = $11")), true);

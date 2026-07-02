@@ -26,6 +26,7 @@ import {
 } from "./workflow-policy.mjs";
 
 const now = () => new Date().toISOString();
+const followUpReminderAt = dueOn => `${dueOn}T09:00:00.000Z`;
 const databaseUnavailable = () => new WorkflowError("DATABASE_UNAVAILABLE", "The authoritative database is unavailable.", 503);
 const requiredText = (value, label) => {
   const text = typeof value === "string" ? value.trim() : "";
@@ -537,6 +538,26 @@ class PostgresTransaction {
         updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at`, [
       event.projectId, this.organizationId, event.eventKey, event.eventType, event.decisionId, event.provider, event.externalRef,
       event.externalUrl, event.scheduledFor, event.lastVerifiedAt, event.createdBy, event.createdAt, event.updatedBy, event.updatedAt
+    ]);
+  }
+
+  async getProjectFollowUp(projectId) {
+    const result = await this.query(`SELECT project_id AS "projectId", due_on AS "dueOn", status,
+      reminder_notification_id AS "reminderNotificationId", created_at AS "createdAt", created_by AS "createdBy",
+      completed_at AS "completedAt", completed_by AS "completedBy"
+      FROM project_follow_ups WHERE organization_id = $1 AND project_id = $2`, [this.organizationId, projectId]);
+    return result.rows?.[0] || null;
+  }
+
+  async upsertProjectFollowUp(followUp) {
+    await this.query(`INSERT INTO project_follow_ups (
+        project_id, organization_id, due_on, status, reminder_notification_id, created_at, created_by, completed_at, completed_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (project_id) DO UPDATE SET due_on = EXCLUDED.due_on, status = EXCLUDED.status,
+        reminder_notification_id = EXCLUDED.reminder_notification_id, completed_at = EXCLUDED.completed_at, completed_by = EXCLUDED.completed_by
+      WHERE project_follow_ups.organization_id = EXCLUDED.organization_id`, [
+      followUp.projectId, this.organizationId, followUp.dueOn, followUp.status, followUp.reminderNotificationId || null,
+      followUp.createdAt, followUp.createdBy, followUp.completedAt || null, followUp.completedBy || null
     ]);
   }
 
@@ -1461,13 +1482,29 @@ export class PostgresWorkflowAdapter {
     const verification = await this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId, actorId: actor.id });
     this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
     const timestamp = now();
+    const reminderNotificationId = randomUUID();
     await this.transaction(async tx => {
       const existing = await tx.getHandoff(projectId);
       if (existing?.status === "accepted") throw new WorkflowError("HANDOFF_ALREADY_ACCEPTED", "This handoff has already been accepted.", 409);
       await tx.upsertHandoff({ projectId, receivingOwnerId: actor.id, status: "accepted", adoptionPlanLink: input.adoptionPlanLink.trim(), supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, onboardingAcknowledged: true, acceptedBy: actor.id, acceptedAt: timestamp, ...artifactVerificationFields(verification) });
+      await tx.upsertProjectFollowUp({ projectId, dueOn: input.followUpDate, status: "pending", reminderNotificationId, createdAt: timestamp, createdBy: actor.id, completedAt: null, completedBy: null });
       for (const key of ["receiving_owner_ack", "support_plan", "follow_up_scheduled"]) await tx.upsertGate({ projectId, key, status: "complete", evidenceLink: input.adoptionPlanLink.trim(), completedBy: actor.id, completedAt: timestamp, exceptionReason: null, ...artifactVerificationFields(verification) });
       await tx.appendAudit(actor.id, "handoff_accepted", "handoff", projectId, existing || null, { status: "accepted", supportEndDate: input.supportEndDate, followUpDate: input.followUpDate, artifactVerificationStatus: verification.status });
+      await tx.appendAudit(actor.id, "follow_up_created", "project_follow_up", projectId, null, { projectId, dueOn: input.followUpDate, status: "pending" });
       await this.enqueueNotification(tx, project.projectLead?.id, "handoff_accepted", "handoff", projectId, { projectId, followUpDate: input.followUpDate }, timestamp);
+      await tx.insertNotificationOutbox({
+        id: reminderNotificationId,
+        recipientId: actor.id,
+        notificationType: "follow_up_due",
+        state: "pending",
+        relatedEntityType: "project_follow_up",
+        relatedEntityId: projectId,
+        attemptCount: 0,
+        payload: { projectId, dueOn: input.followUpDate },
+        createdAt: timestamp,
+        availableAt: followUpReminderAt(input.followUpDate),
+        lastErrorCode: null
+      });
     });
     return this.project(projectId);
   }
