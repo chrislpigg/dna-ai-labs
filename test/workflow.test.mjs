@@ -457,6 +457,42 @@ test("metric plans store approved source references and preserve verified data o
   } finally { dispose(); }
 });
 
+test("portfolio metrics dashboard filters counts and labels metric evidence status", () => {
+  const analyticsAdapter = new AnalyticsAdapter({
+    refreshMetricSync: () => ({
+      value: "42 active teams",
+      verifiedAt: "2026-07-02T00:00:00.000Z",
+      staleAt: "2026-08-01T00:00:00.000Z"
+    })
+  });
+  const { store, dispose } = createStore({ analyticsAdapter });
+  try {
+    const lead = store.actor("accessibility-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    store.upsertMetricPlan(lead, project.id, {
+      sourceType: "analytics_dashboard",
+      sourceRef: "https://analytics.example/dashboards/release-readiness",
+      hypothesisLabel: "Expected review time reduction"
+    });
+    store.refreshMetricPlan(lead, project.id);
+
+    const metrics = store.portfolioMetrics(store.actor("lab-lead"), {
+      cycleId: "cycle-2026-q3",
+      stage: stages.SUBMITTED,
+      ownerId: "accessibility-lead",
+      risk: "Internal",
+      theme: "quality"
+    });
+    assert.equal(metrics.counts.candidate, 1);
+    assert.equal(metrics.counts.validatedImpact, 1);
+    assert.equal(metrics.impact.validatedReach, 5);
+    assert.equal(metrics.projects[0].id, project.id);
+    assert.equal(metrics.metricSources[0].status, "verified");
+    assert.equal(metrics.metricSources[0].sourceHref, "https://analytics.example/dashboards/release-readiness");
+    assert.equal(metrics.availableFilters.stages.includes(stages.SUBMITTED), true);
+  } finally { dispose(); }
+});
+
 test("calendar events are feature-gated, provider-verified, and audited", () => {
   let providerFails = true;
   const calendarAdapter = new CalendarAdapter({

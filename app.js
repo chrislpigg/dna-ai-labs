@@ -11,6 +11,8 @@ let cycles = [];
 let editingCycleId = null;
 let fellowAssignments = [];
 let fellowAssignmentError = "";
+let portfolioMetrics = null;
+let portfolioFilters = { cycleId: "", stage: "", ownerId: "", risk: "", outcome: "", theme: "" };
 
 const activeStages = new Set(["Selected", "Incubating", "Decision pending"]);
 const candidateStages = new Set(["Draft", "Submitted", "Triage"]);
@@ -47,6 +49,12 @@ function directoryWarningList(project) {
 function canViewIntegrationDiagnostics() { return ["lab-lead", "admin"].includes(currentUser?.role); }
 function verificationLabel(status) { return status === "verified" ? "Verified" : "Unverified"; }
 function verificationClass(status) { return status === "verified" ? "is-verified" : "is-unverified"; }
+function metricEvidenceLabel(status) {
+  return status === "verified" ? "Verified source" : status === "stale" ? "Stale source" : "Unverified hypothesis";
+}
+function metricEvidenceClass(status) {
+  return status === "verified" ? "is-verified" : status === "stale" ? "is-stale" : "is-unverified";
+}
 function artifactIntegrationRows(project) {
   const rows = [];
   (project.evidence || []).forEach(entry => rows.push({ label: `Evidence · ${entry.evidenceType?.replaceAll("_", " ")}`, link: entry.sourceLink, status: entry.artifactVerificationStatus, at: entry.artifactVerifiedAt }));
@@ -337,8 +345,13 @@ async function saveIntakeDraft() {
 }
 
 async function refreshPortfolio() {
-  const { projects: result } = await api("/api/v1/projects");
+  const query = new URLSearchParams(Object.entries(portfolioFilters).filter(([, value]) => value));
+  const [{ projects: result }, metricsResult] = await Promise.all([
+    api("/api/v1/projects"),
+    api(`/api/v1/portfolio-metrics${query.size ? `?${query}` : ""}`)
+  ]);
   projects = result;
+  portfolioMetrics = metricsResult.metrics;
   try {
     const { assignments } = await api("/api/v1/fellow-assignments");
     fellowAssignments = assignments;
@@ -349,6 +362,54 @@ async function refreshPortfolio() {
   }
   renderStats();
   renderProjects();
+}
+
+function setSelectOptions(select, options, label, valueFor = value => value, textFor = value => value) {
+  const selected = select.value;
+  select.innerHTML = `<option value="">${label}</option>${options.map(option => `<option value="${escapeHtml(valueFor(option))}">${escapeHtml(textFor(option))}</option>`).join("")}`;
+  select.value = [...select.options].some(option => option.value === selected) ? selected : "";
+}
+
+function syncPortfolioFilterForm() {
+  const form = document.querySelector("#portfolio-filter-form");
+  if (!form || !portfolioMetrics) return;
+  const available = portfolioMetrics.availableFilters || {};
+  setSelectOptions(form.elements.cycleId, available.cycles || [], "All cycles", cycle => cycle.id, cycle => `${cycle.name} · ${cycle.theme}`);
+  setSelectOptions(form.elements.stage, available.stages || [], "All stages");
+  setSelectOptions(form.elements.risk, available.risks || [], "All risk");
+  setSelectOptions(form.elements.outcome, available.outcomes || [], "All outcomes");
+  for (const [key, value] of Object.entries(portfolioFilters)) {
+    if (form.elements[key]) form.elements[key].value = value;
+  }
+  document.querySelectorAll("[data-filter]").forEach(button => {
+    const stage = button.dataset.filter === "all" ? "" : button.dataset.filter;
+    button.classList.toggle("active", stage === portfolioFilters.stage);
+  });
+}
+
+function portfolioFiltersFromForm(form) {
+  return {
+    cycleId: form.elements.cycleId.value,
+    stage: form.elements.stage.value,
+    ownerId: form.elements.ownerId.value.trim(),
+    risk: form.elements.risk.value,
+    outcome: form.elements.outcome.value,
+    theme: form.elements.theme.value.trim()
+  };
+}
+
+function renderMetricSources() {
+  const list = document.querySelector("#metric-source-list");
+  const sources = portfolioMetrics?.metricSources || [];
+  list.innerHTML = sources.length ? sources.map(source => {
+    const sourceCopy = source.sourceHref ? `<a href="${escapeHtml(source.sourceHref)}" target="_blank" rel="noreferrer">${escapeHtml(source.sourceLabel)}</a>` : `<span>${escapeHtml(source.sourceLabel)}</span>`;
+    const dateCopy = source.verifiedAt ? `Verified ${escapeHtml(formatDateTime(source.verifiedAt))}` : "No verified refresh";
+    return `<article class="metric-source-item">
+      <div><h4>${escapeHtml(source.title)}</h4><p>${escapeHtml(source.label)}</p></div>
+      <b class="${metricEvidenceClass(source.status)}">${metricEvidenceLabel(source.status)}</b>
+      <div>${sourceCopy}<small>${dateCopy}</small></div>
+    </article>`;
+  }).join("") : `<p class="empty-state">No projects match these filters.</p>`;
 }
 
 function cyclePayloadFromForm(formElement) {
@@ -472,19 +533,22 @@ async function saveCycle(event) {
 }
 
 function renderStats() {
-  const candidates = projects.filter(project => candidateStages.has(project.stage));
-  const active = projects.filter(project => activeStages.has(project.stage));
-  const acknowledged = active.filter(project => hasActiveDirectoryAssignment(project, "receivingOwner")).length;
-  const potentialReach = active.reduce((total, project) => total + (Number(project.potentialReach) || 0), 0);
-  document.querySelector("#active-count").textContent = String(active.length).padStart(2, "0");
-  document.querySelector("#owner-count").innerHTML = `${String(acknowledged).padStart(2, "0")}<span>/${String(active.length).padStart(2, "0")}</span>`;
-  document.querySelector("#reach-count").innerHTML = `${potentialReach}<span> teams</span>`;
-  document.querySelector("#active-count").closest("article").querySelector(".metric-label").textContent = "Active projects";
-  document.querySelector("#active-count").closest("article").querySelector(".metric-detail").textContent = `${candidates.length} candidates in triage`;
+  const counts = portfolioMetrics?.counts || {};
+  const impact = portfolioMetrics?.impact || {};
+  document.querySelector("#candidate-count").textContent = String(counts.candidate || 0).padStart(2, "0");
+  document.querySelector("#active-count").textContent = String(counts.active || 0).padStart(2, "0");
+  document.querySelector("#decision-pending-count").textContent = String(counts.decisionPending || 0).padStart(2, "0");
+  document.querySelector("#validated-adopter-count").textContent = String(counts.validatedAdopter || 0).padStart(2, "0");
+  document.querySelector("#validated-impact-count").textContent = String(counts.validatedImpact || 0).padStart(2, "0");
+  document.querySelector("#at-risk-count").textContent = String(counts.atRisk || 0).padStart(2, "0");
+  document.querySelector("#validated-impact-count").closest("article").querySelector(".metric-detail").textContent = `${impact.validatedReach || 0}/${impact.potentialReach || 0} teams verified`;
+  syncPortfolioFilterForm();
+  renderMetricSources();
 }
 
 function renderProjects() {
-  const displayed = currentFilter === "all" ? projects : projects.filter(project => project.stage === currentFilter);
+  const metricProjectIds = new Set((portfolioMetrics?.projects || projects).map(project => project.id));
+  const displayed = projects.filter(project => metricProjectIds.has(project.id));
   const grid = document.querySelector("#project-grid");
   grid.innerHTML = displayed.length ? displayed.map(project => {
     const gatesComplete = project.gates.filter(gate => ["complete", "excepted"].includes(gate.status)).length;
@@ -740,7 +804,14 @@ document.addEventListener("click", event => {
   const trigger = event.target.closest("[data-open-intake]");
   if (trigger) { showView("intake"); window.location.hash = "intake"; document.querySelector("input[name=title]").focus(); }
   const filter = event.target.closest("[data-filter]");
-  if (filter) { currentFilter = filter.dataset.filter; document.querySelectorAll(".filter").forEach(button => button.classList.toggle("active", button === filter)); renderProjects(); }
+  if (filter) {
+    portfolioFilters.stage = filter.dataset.filter === "all" ? "" : filter.dataset.filter;
+    refreshPortfolio();
+  }
+  if (event.target.closest("[data-clear-portfolio-filters]")) {
+    portfolioFilters = { cycleId: "", stage: "", ownerId: "", risk: "", outcome: "", theme: "" };
+    refreshPortfolio();
+  }
   const projectButton = event.target.closest("[data-project]");
   if (projectButton) openProject(projectButton.dataset.project);
   const draftButton = event.target.closest("[data-draft]");
@@ -807,6 +878,11 @@ document.querySelector("#intake-form").addEventListener("submit", async event =>
 });
 
 document.querySelector("#cycle-form").addEventListener("submit", saveCycle);
+document.querySelector("#portfolio-filter-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  portfolioFilters = portfolioFiltersFromForm(event.currentTarget);
+  await refreshPortfolio();
+});
 
 async function init() {
   try {

@@ -103,6 +103,7 @@ async function api(req, res, url) {
   if (req.method === "GET" && path === "/api/v1/notifications/outbox") return respond(res, 200, { notifications: await workflow.notificationOutbox(requestActor, Number(url.searchParams.get("limit")) || 100) });
   if (req.method === "GET" && path === "/api/v1/fellow-assignments") return respond(res, 200, { assignments: await workflow.listFellowAssignments(requestActor, { cycleId: url.searchParams.get("cycleId"), projectId: url.searchParams.get("projectId") }) });
   if (req.method === "POST" && path === "/api/v1/fellow-assignments") return respond(res, 201, { assignment: await workflow.createFellowAssignment(requestActor, await body(req)) });
+  if (req.method === "GET" && path === "/api/v1/portfolio-metrics") return respond(res, 200, { metrics: await workflow.portfolioMetrics(requestActor, Object.fromEntries(url.searchParams)) });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: await workflow.listProjects() });
   if (req.method === "GET" && path === "/api/v1/audit-events") {
     requireRole(requestActor, [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.ADMIN]);

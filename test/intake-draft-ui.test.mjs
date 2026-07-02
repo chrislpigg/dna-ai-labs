@@ -102,3 +102,17 @@ test("project brief exposes integration status without implying unverified succe
   assert.match(app, /\$\{integrationStatus\}/);
   assert.doesNotMatch(app, /Approved link<\/a>/);
 });
+
+test("portfolio metrics dashboard exposes filters, API data, and source labels", () => {
+  assert.match(index, /aria-label="Portfolio metrics dashboard"/);
+  for (const id of ["candidate-count", "active-count", "decision-pending-count", "validated-adopter-count", "validated-impact-count", "at-risk-count"]) {
+    assert.match(index, new RegExp(`id="${id}"`));
+  }
+  assert.match(index, /id="portfolio-filter-form"[\s\S]*name="cycleId"[\s\S]*name="stage"[\s\S]*name="ownerId"[\s\S]*name="risk"[\s\S]*name="outcome"[\s\S]*name="theme"/);
+  assert.match(index, /id="metric-source-list"[\s\S]*aria-live="polite"/);
+  assert.match(app, /api\(`\/api\/v1\/portfolio-metrics\$\{query\.size \? `\?\$\{query\}` : ""\}`\)/);
+  assert.match(app, /function metricEvidenceLabel\(status\)/);
+  assert.match(app, /Unverified hypothesis/);
+  assert.match(app, /Verified source/);
+  assert.match(app, /portfolioFiltersFromForm/);
+});

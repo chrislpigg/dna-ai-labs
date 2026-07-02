@@ -13,6 +13,7 @@ import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifie
 import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
+import { buildPortfolioMetrics } from "./portfolio-metrics.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -743,6 +744,10 @@ export class PostgresWorkflowAdapter {
   listCycles() { return this.reads.listCycles(); }
   async listProjects() {
     return Promise.all((await this.reads.listProjects()).map(project => enrichProjectDirectoryContext(project, this.directory)));
+  }
+  async portfolioMetrics(actor, filters = {}) {
+    requireRole(actor, Object.values(roles));
+    return buildPortfolioMetrics({ projects: await this.listProjects(), cycles: await this.listCycles(), filters });
   }
   async project(id) { return enrichProjectDirectoryContext(await this.reads.getProject(id), this.directory); }
   async getProjectIncludingDeleted(id) { return enrichProjectDirectoryContext(await this.reads.getProjectIncludingDeleted(id), this.directory); }

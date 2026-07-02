@@ -54,12 +54,30 @@
             <button class="button button-ghost" data-open-intake>Start an intake <span>→</span></button>
           </div>
 
-          <div class="metric-grid" aria-label="Portfolio summary">
-            <article><p class="metric-label">Active projects</p><p class="metric-value" id="active-count">03</p><p class="metric-detail">In the current cycle</p></article>
-            <article><p class="metric-label">Adoption paths named</p><p class="metric-value" id="owner-count">02<span>/03</span></p><p class="metric-detail">A required selection gate</p></article>
-            <article><p class="metric-label">Potential reach</p><p class="metric-value" id="reach-count">14<span> teams</span></p><p class="metric-detail">If pilots prove useful</p></article>
-            <article><p class="metric-label">Next decision</p><p class="metric-value metric-date">Jul 18</p><p class="metric-detail">Portfolio selection session</p></article>
+          <div class="metric-grid portfolio-metrics" aria-label="Portfolio metrics dashboard">
+            <article><p class="metric-label">Candidate</p><p class="metric-value" id="candidate-count">00</p><p class="metric-detail">Submitted or in triage</p></article>
+            <article><p class="metric-label">Active</p><p class="metric-value" id="active-count">00</p><p class="metric-detail">Selected or incubating</p></article>
+            <article><p class="metric-label">Decision pending</p><p class="metric-value" id="decision-pending-count">00</p><p class="metric-detail">Awaiting final governance</p></article>
+            <article><p class="metric-label">Validated adopter</p><p class="metric-value" id="validated-adopter-count">00</p><p class="metric-detail">Transferred or handed off</p></article>
+            <article><p class="metric-label">Validated impact</p><p class="metric-value" id="validated-impact-count">00</p><p class="metric-detail">Verified metric source</p></article>
+            <article><p class="metric-label">At risk</p><p class="metric-value" id="at-risk-count">00</p><p class="metric-detail">Stale, blocked, or overdue</p></article>
           </div>
+
+          <form id="portfolio-filter-form" class="portfolio-filter-form" aria-label="Portfolio metric filters">
+            <label>Cycle<select name="cycleId"><option value="">All cycles</option></select></label>
+            <label>Stage<select name="stage"><option value="">All stages</option></select></label>
+            <label>Owner<input name="ownerId" placeholder="Any owner id" /></label>
+            <label>Risk<select name="risk"><option value="">All risk</option></select></label>
+            <label>Outcome<select name="outcome"><option value="">All outcomes</option></select></label>
+            <label>Theme<input name="theme" placeholder="Any theme" /></label>
+            <button class="button button-primary" type="submit">Apply</button>
+            <button class="button button-ghost" type="button" data-clear-portfolio-filters>Clear</button>
+          </form>
+
+          <section class="metric-source-panel" aria-labelledby="metric-source-title">
+            <div><p class="eyebrow">Metric sources</p><h3 id="metric-source-title">Evidence status</h3></div>
+            <div id="metric-source-list" class="metric-source-list" aria-live="polite"></div>
+          </section>
 
           <div class="section-heading">
             <div><p class="eyebrow">The work</p><h2>Portfolio at a glance</h2></div>

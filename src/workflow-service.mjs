@@ -10,6 +10,7 @@ import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
+import { buildPortfolioMetrics } from "./portfolio-metrics.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -188,6 +189,10 @@ export class WorkflowService {
   listCycles() { return this.storage.listCycles(); }
   project(id) { return enrichProjectDirectoryContextSync(this.storage.getProject(id), this.directory); }
   listProjects() { return this.storage.listProjects().map(project => enrichProjectDirectoryContextSync(project, this.directory)); }
+  portfolioMetrics(actor, filters = {}) {
+    requireRole(actor, Object.values(roles));
+    return buildPortfolioMetrics({ projects: this.listProjects(), cycles: this.listCycles(), filters });
+  }
   intakeDraft(actor, id) {
     const draft = this.storage.getIntakeDraft(id);
     this.requireDraftAccess(actor, draft);
