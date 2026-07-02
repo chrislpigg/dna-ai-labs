@@ -100,6 +100,12 @@ export class SqliteLabsStorage {
         flag_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
         FOREIGN KEY(updated_by) REFERENCES users(id)
       );
+      CREATE TABLE IF NOT EXISTS integration_attempts (
+        id TEXT PRIMARY KEY, integration_type TEXT NOT NULL, operation TEXT NOT NULL, outcome TEXT NOT NULL,
+        error_code TEXT, project_id TEXT, entity_type TEXT, actor_id TEXT, occurred_at TEXT NOT NULL,
+        CHECK(integration_type IN ('artifact', 'work_tracking', 'calendar')),
+        CHECK(outcome IN ('success', 'failure', 'timeout'))
+      );
       CREATE TABLE IF NOT EXISTS role_assignments (
         user_id TEXT PRIMARY KEY, assigned_role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
         assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL,
@@ -681,6 +687,20 @@ export class SqliteLabsStorage {
       VALUES (?, ?, ?, ?)
       ON CONFLICT(flag_key) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
       .run(flag.key, flag.enabled ? 1 : 0, flag.updatedAt, flag.updatedBy);
+  }
+
+  appendIntegrationAttempt(attempt) {
+    this.db.prepare(`INSERT INTO integration_attempts (id, integration_type, operation, outcome, error_code, project_id, entity_type, actor_id, occurred_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(attempt.id, attempt.integrationType, attempt.operation, attempt.outcome, attempt.errorCode || null,
+        attempt.projectId || null, attempt.entityType || null, attempt.actorId || null, attempt.occurredAt);
+  }
+
+  listIntegrationAttempts(limit = 100) {
+    const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 250) : 100;
+    return this.db.prepare(`SELECT id, integration_type AS integrationType, operation, outcome, error_code AS errorCode,
+      project_id AS projectId, entity_type AS entityType, actor_id AS actorId, occurred_at AS occurredAt
+      FROM integration_attempts ORDER BY occurred_at DESC LIMIT ?`).all(bounded);
   }
 
   serializeRoleAssignment(row) {

@@ -223,6 +223,23 @@ class PostgresTransaction {
     ]);
   }
 
+  async appendIntegrationAttempt(attempt) {
+    await this.query(`INSERT INTO integration_attempts (
+      id, organization_id, integration_type, operation, outcome, error_code, project_id, entity_type, actor_id, occurred_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, [
+      attempt.id, this.organizationId, attempt.integrationType, attempt.operation, attempt.outcome, attempt.errorCode || null,
+      attempt.projectId || null, attempt.entityType || null, attempt.actorId || null, attempt.occurredAt
+    ]);
+  }
+
+  async listIntegrationAttempts(limit = 100) {
+    const bounded = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 250) : 100;
+    const result = await this.query(`SELECT id, integration_type AS "integrationType", operation, outcome, error_code AS "errorCode",
+      project_id AS "projectId", entity_type AS "entityType", actor_id AS "actorId", occurred_at AS "occurredAt"
+      FROM integration_attempts WHERE organization_id = $1 ORDER BY occurred_at DESC LIMIT $2`, [this.organizationId, bounded]);
+    return result.rows || [];
+  }
+
   async upsertRoleAssignment(assignment) {
     await this.query(`INSERT INTO role_assignments (organization_id, user_id, assigned_role, active, assigned_by, assigned_at)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -672,6 +689,55 @@ export class PostgresWorkflowAdapter {
     return this.reads.getFeatureFlag(flagKey);
   }
 
+  async recordIntegrationAttempt(integrationType, operation, context = {}, outcome, errorCode = null) {
+    try {
+      await this.transaction(tx => tx.appendIntegrationAttempt({
+        id: randomUUID(),
+        integrationType,
+        operation,
+        outcome,
+        errorCode,
+        projectId: context.projectId || null,
+        entityType: context.entityType || null,
+        actorId: context.actorId || null,
+        occurredAt: now()
+      }));
+    } catch {
+      // Health telemetry must never mask the workflow result.
+    }
+  }
+
+  async runIntegrationAttempt(integrationType, operation, context, work) {
+    try {
+      const result = await work();
+      await this.recordIntegrationAttempt(integrationType, operation, context, "success");
+      return result;
+    } catch (error) {
+      const code = error instanceof WorkflowError ? error.code : "INTEGRATION_ERROR";
+      await this.recordIntegrationAttempt(integrationType, operation, context, code.includes("TIMEOUT") ? "timeout" : "failure", code);
+      throw error;
+    }
+  }
+
+  async integrationHealth(actor) {
+    requireRole(actor, [roles.ADMIN]);
+    const attempts = await this.transaction(tx => tx.listIntegrationAttempts(100));
+    const summary = ["artifact", "work_tracking", "calendar"].map(type => {
+      const records = attempts.filter(attempt => attempt.integrationType === type);
+      const last = records[0] || null;
+      const failures = records.filter(attempt => attempt.outcome !== "success");
+      return {
+        integrationType: type,
+        recentAttempts: records.length,
+        recentFailures: failures.length,
+        lastOutcome: last?.outcome || "none",
+        lastErrorCode: last?.errorCode || null,
+        lastAttemptAt: last?.occurredAt || null
+      };
+    });
+    return { summary, attempts };
+  }
+
   async listRoleAssignments(actor) {
     requireRole(actor, [roles.ADMIN]);
     return this.reads.listRoleAssignments();
@@ -730,7 +796,7 @@ export class PostgresWorkflowAdapter {
   }
 
   async verifyArtifactLink(value, context = {}) {
-    return this.artifactVerifier.verifyLink(value, context);
+    return this.runIntegrationAttempt("artifact", "verify", context, () => this.artifactVerifier.verifyLink(value, context));
   }
 
   validateFutureDate(value, label) {
@@ -1014,7 +1080,7 @@ export class PostgresWorkflowAdapter {
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_GATE_STATUS", "Gate status is invalid.", 422);
     if (input.status === "complete" && !String(input.evidenceLink ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE", "Completed gates require an approved evidence link.", 422);
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "Excepted gates require a written risk acceptance.", 422);
-    const verification = input.status === "complete" ? await this.verifyArtifactLink(input.evidenceLink, { entityType: "project_gate", projectId, key }) : null;
+    const verification = input.status === "complete" ? await this.verifyArtifactLink(input.evidenceLink, { entityType: "project_gate", projectId, key, actorId: actor.id }) : null;
     const before = project.gates.find(gate => gate.key === key) || null; const timestamp = now();
     await this.transaction(async tx => {
       await tx.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null, ...artifactVerificationFields(verification) });
@@ -1033,7 +1099,7 @@ export class PostgresWorkflowAdapter {
     if (!String(input.result ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE_RESULT", "Evidence requires a result summary.", 422);
     if (!Number.isInteger(Number(input.sampleSize)) || Number(input.sampleSize) < 1) throw new WorkflowError("INVALID_SAMPLE_SIZE", "Evidence requires a sample size of at least one.", 422);
     if (!["low", "medium", "high"].includes(input.confidence)) throw new WorkflowError("INVALID_CONFIDENCE", "Evidence confidence is invalid.", 422);
-    const verification = await this.verifyArtifactLink(input.sourceLink, { entityType: "evidence", projectId, evidenceType: input.evidenceType });
+    const verification = await this.verifyArtifactLink(input.sourceLink, { entityType: "evidence", projectId, evidenceType: input.evidenceType, actorId: actor.id });
     const observed = new Date(`${input.observedAt}T12:00:00`);
     if (!input.observedAt || Number.isNaN(observed.getTime()) || observed > new Date()) throw new WorkflowError("INVALID_OBSERVED_DATE", "Evidence date must be today or earlier.", 422);
     const id = randomUUID(); const timestamp = now();
@@ -1051,7 +1117,7 @@ export class PostgresWorkflowAdapter {
     if (![stages.INCUBATING, stages.DECISION_PENDING].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Reviews can be recorded only during incubation or decision review.", 409);
     if (!reviewTypes.includes(reviewType) || !project.reviewRequirements.includes(reviewType)) throw new WorkflowError("INVALID_REVIEW_TYPE", "This review is not required for the project risk classification.", 422);
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_REVIEW_STATUS", "Review status is invalid.", 422);
-    const verification = input.status === "complete" ? await this.verifyArtifactLink(input.evidenceLink, { entityType: "project_review", projectId, reviewType }) : null;
+    const verification = input.status === "complete" ? await this.verifyArtifactLink(input.evidenceLink, { entityType: "project_review", projectId, reviewType, actorId: actor.id }) : null;
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "An excepted review requires written risk acceptance.", 422);
     const before = project.reviews.find(review => review.reviewType === reviewType) || null; const timestamp = now();
     await this.transaction(async tx => {
@@ -1090,7 +1156,7 @@ export class PostgresWorkflowAdapter {
     const key = normalizeDeliveryKitItemKey(itemKey);
     const item = normalizeDeliveryKitInput(input);
     await this.actor(item.ownerId);
-    const verification = item.evidenceLink ? await this.verifyArtifactLink(item.evidenceLink, { entityType: "delivery_kit_item", projectId, itemKey: key }) : null;
+    const verification = item.evidenceLink ? await this.verifyArtifactLink(item.evidenceLink, { entityType: "delivery_kit_item", projectId, itemKey: key, actorId: actor.id }) : null;
     const before = project.deliveryKit.find(existing => existing.itemKey === key) || null;
     const timestamp = now();
     const next = {
@@ -1123,7 +1189,7 @@ export class PostgresWorkflowAdapter {
     const project = await this.project(projectId);
     this.requireDeliveryKitWriteAccess(actor, project);
     const before = await this.transaction(tx => tx.getProjectWorkItem(projectId));
-    const verified = await this.workTracking.createOrLink(input, { projectId, actorId: actor.id });
+    const verified = await this.runIntegrationAttempt("work_tracking", "create_or_link", { projectId, entityType: "project_work_item", actorId: actor.id }, () => this.workTracking.createOrLink(input, { projectId, actorId: actor.id }));
     const timestamp = now();
     const next = {
       projectId,
@@ -1152,7 +1218,7 @@ export class PostgresWorkflowAdapter {
     this.requireDeliveryKitWriteAccess(actor, project);
     const before = await this.transaction(tx => tx.getProjectWorkItem(projectId));
     if (!before) throw new WorkflowError("WORK_ITEM_NOT_FOUND", "Project does not have a linked work item.", 404);
-    const verified = await this.workTracking.refresh(before, { projectId, actorId: actor.id });
+    const verified = await this.runIntegrationAttempt("work_tracking", "refresh", { projectId, entityType: "project_work_item", actorId: actor.id }, () => this.workTracking.refresh(before, { projectId, actorId: actor.id }));
     const timestamp = now();
     const next = {
       ...before,
@@ -1187,7 +1253,7 @@ export class PostgresWorkflowAdapter {
     if (actor.role === roles.RECEIVING_OWNER && project.receivingOwner?.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Receiving owners can schedule calendar events only for their assigned projects.", 403);
     const event = normalizeCalendarEventInput(input, project);
     const before = await this.transaction(tx => tx.getProjectCalendarEvent(projectId, event.eventKey));
-    const verified = await this.calendar.createOrValidate({ ...event, eventUrl: event.externalUrl }, { projectId, actorId: actor.id, decisionId: event.decisionId });
+    const verified = await this.runIntegrationAttempt("calendar", "create_or_validate", { projectId, entityType: "project_calendar_event", actorId: actor.id }, () => this.calendar.createOrValidate({ ...event, eventUrl: event.externalUrl }, { projectId, actorId: actor.id, decisionId: event.decisionId }));
     const timestamp = now();
     const next = {
       projectId,
@@ -1278,7 +1344,7 @@ export class PostgresWorkflowAdapter {
     if (!project.receivingOwner || project.receivingOwner.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the named receiving owner can accept this handoff.", 403);
     if (!project.pendingDecision || project.pendingDecision.outcome !== outcomes.TRANSFER) throw new WorkflowError("INVALID_HANDOFF_STATE", "A transfer decision request is required before handoff acceptance.", 409);
     if (!input.onboardingAcknowledged) throw new WorkflowError("ONBOARDING_REQUIRED", "Receiving owner must acknowledge onboarding before accepting handoff.", 422);
-    const verification = await this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId });
+    const verification = await this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId, actorId: actor.id });
     this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
     const timestamp = now();
     await this.transaction(async tx => {

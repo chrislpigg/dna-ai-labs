@@ -229,6 +229,55 @@ export class WorkflowService {
     return this.storage.getFeatureFlag(flagKey);
   }
 
+  recordIntegrationAttempt(integrationType, operation, context = {}, outcome, errorCode = null) {
+    try {
+      this.storage.appendIntegrationAttempt({
+        id: randomUUID(),
+        integrationType,
+        operation,
+        outcome,
+        errorCode,
+        projectId: context.projectId || null,
+        entityType: context.entityType || null,
+        actorId: context.actorId || null,
+        occurredAt: now()
+      });
+    } catch {
+      // Health telemetry must never mask the workflow result.
+    }
+  }
+
+  runIntegrationAttempt(integrationType, operation, context, work) {
+    try {
+      const result = work();
+      this.recordIntegrationAttempt(integrationType, operation, context, "success");
+      return result;
+    } catch (error) {
+      const code = error instanceof WorkflowError ? error.code : "INTEGRATION_ERROR";
+      this.recordIntegrationAttempt(integrationType, operation, context, code.includes("TIMEOUT") ? "timeout" : "failure", code);
+      throw error;
+    }
+  }
+
+  integrationHealth(actor) {
+    requireRole(actor, [roles.ADMIN]);
+    const attempts = this.storage.listIntegrationAttempts(100);
+    const summary = ["artifact", "work_tracking", "calendar"].map(type => {
+      const records = attempts.filter(attempt => attempt.integrationType === type);
+      const last = records[0] || null;
+      const failures = records.filter(attempt => attempt.outcome !== "success");
+      return {
+        integrationType: type,
+        recentAttempts: records.length,
+        recentFailures: failures.length,
+        lastOutcome: last?.outcome || "none",
+        lastErrorCode: last?.errorCode || null,
+        lastAttemptAt: last?.occurredAt || null
+      };
+    });
+    return { summary, attempts };
+  }
+
   listRoleAssignments(actor) {
     requireRole(actor, [roles.ADMIN]);
     return this.storage.listRoleAssignments();
@@ -619,7 +668,7 @@ export class WorkflowService {
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_GATE_STATUS", "Gate status is invalid.", 422);
     if (input.status === "complete" && !String(input.evidenceLink ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE", "Completed gates require an approved evidence link.", 422);
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "Excepted gates require a written risk acceptance.", 422);
-    const verification = input.status === "complete" ? this.verifyArtifactLink(input.evidenceLink, { entityType: "project_gate", projectId, key }) : null;
+    const verification = input.status === "complete" ? this.verifyArtifactLink(input.evidenceLink, { entityType: "project_gate", projectId, key, actorId: actor.id }) : null;
     const before = project.gates.find(gate => gate.key === key) || null; const timestamp = now();
     this.storage.transaction(() => {
       this.storage.upsertGate({ projectId, key, status: input.status, evidenceLink: input.evidenceLink?.trim() || null, completedBy: input.status === "incomplete" ? null : actor.id, completedAt: input.status === "incomplete" ? null : timestamp, exceptionReason: input.exceptionReason?.trim() || null, ...artifactVerificationFields(verification) });
@@ -634,7 +683,7 @@ export class WorkflowService {
   }
 
   verifyArtifactLink(value, context = {}) {
-    return this.artifactVerifier.verifyLinkSync(value, context);
+    return this.runIntegrationAttempt("artifact", "verify", context, () => this.artifactVerifier.verifyLinkSync(value, context));
   }
 
   addEvidence(actor, projectId, input) {
@@ -646,7 +695,7 @@ export class WorkflowService {
     if (!String(input.result ?? "").trim()) throw new WorkflowError("MISSING_EVIDENCE_RESULT", "Evidence requires a result summary.", 422);
     if (!Number.isInteger(Number(input.sampleSize)) || Number(input.sampleSize) < 1) throw new WorkflowError("INVALID_SAMPLE_SIZE", "Evidence requires a sample size of at least one.", 422);
     if (!["low", "medium", "high"].includes(input.confidence)) throw new WorkflowError("INVALID_CONFIDENCE", "Evidence confidence is invalid.", 422);
-    const verification = this.verifyArtifactLink(input.sourceLink, { entityType: "evidence", projectId, evidenceType: input.evidenceType });
+    const verification = this.verifyArtifactLink(input.sourceLink, { entityType: "evidence", projectId, evidenceType: input.evidenceType, actorId: actor.id });
     const observed = new Date(`${input.observedAt}T12:00:00`);
     if (!input.observedAt || Number.isNaN(observed.getTime()) || observed > new Date()) throw new WorkflowError("INVALID_OBSERVED_DATE", "Evidence date must be today or earlier.", 422);
     const id = randomUUID(); const timestamp = now();
@@ -664,7 +713,7 @@ export class WorkflowService {
     if (![stages.INCUBATING, stages.DECISION_PENDING].includes(project.stage)) throw new WorkflowError("INVALID_STATE", "Reviews can be recorded only during incubation or decision review.", 409);
     if (!reviewTypes.includes(reviewType) || !project.reviewRequirements.includes(reviewType)) throw new WorkflowError("INVALID_REVIEW_TYPE", "This review is not required for the project risk classification.", 422);
     if (!["complete", "excepted", "incomplete"].includes(input.status)) throw new WorkflowError("INVALID_REVIEW_STATUS", "Review status is invalid.", 422);
-    const verification = input.status === "complete" ? this.verifyArtifactLink(input.evidenceLink, { entityType: "project_review", projectId, reviewType }) : null;
+    const verification = input.status === "complete" ? this.verifyArtifactLink(input.evidenceLink, { entityType: "project_review", projectId, reviewType, actorId: actor.id }) : null;
     if (input.status === "excepted" && !String(input.exceptionReason ?? "").trim()) throw new WorkflowError("MISSING_EXCEPTION", "An excepted review requires written risk acceptance.", 422);
     const before = project.reviews.find(review => review.reviewType === reviewType) || null; const timestamp = now();
     this.storage.transaction(() => {
@@ -695,7 +744,7 @@ export class WorkflowService {
     const key = normalizeDeliveryKitItemKey(itemKey);
     const item = normalizeDeliveryKitInput(input);
     this.actor(item.ownerId);
-    const verification = item.evidenceLink ? this.verifyArtifactLink(item.evidenceLink, { entityType: "delivery_kit_item", projectId, itemKey: key }) : null;
+    const verification = item.evidenceLink ? this.verifyArtifactLink(item.evidenceLink, { entityType: "delivery_kit_item", projectId, itemKey: key, actorId: actor.id }) : null;
     const before = this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key) || null;
     const timestamp = now();
     const next = {
@@ -734,7 +783,7 @@ export class WorkflowService {
     const project = this.project(projectId);
     this.requireDeliveryKitWriteAccess(actor, project);
     const before = this.storage.getProjectWorkItem(projectId);
-    const verified = this.workTracking.createOrLinkSync(input, { projectId, actorId: actor.id });
+    const verified = this.runIntegrationAttempt("work_tracking", "create_or_link", { projectId, entityType: "project_work_item", actorId: actor.id }, () => this.workTracking.createOrLinkSync(input, { projectId, actorId: actor.id }));
     const timestamp = now();
     const next = {
       projectId,
@@ -763,7 +812,7 @@ export class WorkflowService {
     this.requireDeliveryKitWriteAccess(actor, project);
     const before = this.storage.getProjectWorkItem(projectId);
     if (!before) throw new WorkflowError("WORK_ITEM_NOT_FOUND", "Project does not have a linked work item.", 404);
-    const verified = this.workTracking.refreshSync(before, { projectId, actorId: actor.id });
+    const verified = this.runIntegrationAttempt("work_tracking", "refresh", { projectId, entityType: "project_work_item", actorId: actor.id }, () => this.workTracking.refreshSync(before, { projectId, actorId: actor.id }));
     const timestamp = now();
     const next = {
       ...before,
@@ -798,7 +847,7 @@ export class WorkflowService {
     if (actor.role === roles.RECEIVING_OWNER && project.receivingOwner?.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Receiving owners can schedule calendar events only for their assigned projects.", 403);
     const event = normalizeCalendarEventInput(input, project);
     const before = this.storage.getProjectCalendarEvent(projectId, event.eventKey);
-    const verified = this.calendar.createOrValidateSync({ ...event, eventUrl: event.externalUrl }, { projectId, actorId: actor.id, decisionId: event.decisionId });
+    const verified = this.runIntegrationAttempt("calendar", "create_or_validate", { projectId, entityType: "project_calendar_event", actorId: actor.id }, () => this.calendar.createOrValidateSync({ ...event, eventUrl: event.externalUrl }, { projectId, actorId: actor.id, decisionId: event.decisionId }));
     const timestamp = now();
     const next = {
       projectId,
@@ -889,7 +938,7 @@ export class WorkflowService {
     if (!project.receivingOwner || project.receivingOwner.id !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the named receiving owner can accept this handoff.", 403);
     if (!project.pendingDecision || project.pendingDecision.outcome !== outcomes.TRANSFER) throw new WorkflowError("INVALID_HANDOFF_STATE", "A transfer decision request is required before handoff acceptance.", 409);
     if (!input.onboardingAcknowledged) throw new WorkflowError("ONBOARDING_REQUIRED", "Receiving owner must acknowledge onboarding before accepting handoff.", 422);
-    const verification = this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId });
+    const verification = this.verifyArtifactLink(input.adoptionPlanLink, { entityType: "handoff", projectId, actorId: actor.id });
     this.validateFutureDate(input.supportEndDate, "Support end date"); this.validateFutureDate(input.followUpDate, "Follow-up date");
     const timestamp = now(); const existing = this.storage.getHandoff(projectId);
     if (existing?.status === "accepted") throw new WorkflowError("HANDOFF_ALREADY_ACCEPTED", "This handoff has already been accepted.", 409);

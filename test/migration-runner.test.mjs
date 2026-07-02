@@ -20,10 +20,22 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items", "020_project_calendar_events", "021_integration_attempts"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("integration attempts migration stores non-sensitive health metadata", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "021_integration_attempts");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS integration_attempts/);
+  assert.match(migration.sql, /integration_type TEXT NOT NULL/);
+  assert.match(migration.sql, /outcome TEXT NOT NULL/);
+  assert.match(migration.sql, /error_code TEXT/);
+  assert.match(migration.sql, /integration_type IN \('artifact', 'work_tracking', 'calendar'\)/);
+  assert.match(migration.sql, /outcome IN \('success', 'failure', 'timeout'\)/);
+  assert.match(migration.sql, /integration_attempts_health_idx ON integration_attempts \(organization_id, integration_type, occurred_at DESC\)/);
 });
 
 test("project calendar event migration stores scheduled approved event references", () => {

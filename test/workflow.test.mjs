@@ -465,6 +465,34 @@ test("calendar events are feature-gated, provider-verified, and audited", () => 
   } finally { dispose(); }
 });
 
+test("integration health is admin-only and excludes sensitive provider payloads", () => {
+  const workTrackingAdapter = new WorkTrackingAdapter({
+    approvedOrigins: ["https://tracker.example"],
+    linkWorkItemSync: () => { throw new Error("provider token secret"); }
+  });
+  const { store, dispose } = createStore({ workTrackingAdapter });
+  try {
+    const admin = store.actor("admin");
+    const lead = store.actor("accessibility-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    store.setFeatureFlag(admin, "work_tracking_integration", { enabled: true });
+    expectWorkflowError(() => store.createOrLinkWorkItem(lead, project.id, { externalUrl: "https://tracker.example/browse/SECRET-1" }), "WORK_TRACKING_UNAVAILABLE");
+
+    expectWorkflowError(() => store.integrationHealth(store.actor("lab-lead")), "FORBIDDEN");
+    const health = store.integrationHealth(admin);
+    const work = health.summary.find(entry => entry.integrationType === "work_tracking");
+    assert.equal(work.recentFailures, 1);
+    assert.equal(work.lastOutcome, "failure");
+    assert.equal(work.lastErrorCode, "WORK_TRACKING_UNAVAILABLE");
+    assert.equal(health.attempts[0].integrationType, "work_tracking");
+    assert.equal(health.attempts[0].projectId, project.id);
+    const serialized = JSON.stringify(health);
+    assert.equal(serialized.includes("SECRET-1"), false);
+    assert.equal(serialized.includes("tracker.example"), false);
+    assert.equal(serialized.includes("provider token secret"), false);
+  } finally { dispose(); }
+});
+
 test("Fellow assignments require manager acknowledgement before activation", () => {
   const { store, dispose } = createStore();
   try {

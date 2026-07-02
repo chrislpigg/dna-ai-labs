@@ -99,6 +99,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && path === "/api/v1/cycles") return respond(res, 201, { cycle: await workflow.createCycle(requestActor, await body(req)) });
   if (req.method === "GET" && path === "/api/v1/feature-flags") return respond(res, 200, { flags: await workflow.listFeatureFlags(requestActor) });
   if (req.method === "GET" && path === "/api/v1/role-assignments") return respond(res, 200, { assignments: await workflow.listRoleAssignments(requestActor) });
+  if (req.method === "GET" && path === "/api/v1/integrations/health") return respond(res, 200, await workflow.integrationHealth(requestActor));
   if (req.method === "GET" && path === "/api/v1/fellow-assignments") return respond(res, 200, { assignments: await workflow.listFellowAssignments(requestActor, { cycleId: url.searchParams.get("cycleId"), projectId: url.searchParams.get("projectId") }) });
   if (req.method === "POST" && path === "/api/v1/fellow-assignments") return respond(res, 201, { assignment: await workflow.createFellowAssignment(requestActor, await body(req)) });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: await workflow.listProjects() });

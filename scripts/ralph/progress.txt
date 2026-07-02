@@ -346,4 +346,13 @@ Started: 2026-06-20
 - Files changed: `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: integration UI should distinguish verified references from merely present links, and provider identifiers are diagnostics rather than general workspace copy.
 
+## 2026-07-02 — US-040 Add integration health reporting
+
+- Added non-sensitive integration-attempt records for artifact, work-tracking, and calendar operations with operation, outcome, error code, project/entity metadata, actor id, and timestamp only.
+- Added an administrator-only integration health endpoint and workflow method that summarize recent attempts and failures without exposing URLs, tokens, provider payloads, or raw error messages.
+- Wired artifact verification, work-item create/link/refresh, and calendar scheduling paths to record success, failure, and timeout outcomes without masking the underlying workflow result.
+- Verification: `npm test` (115 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/021_integration_attempts.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `test/migration-runner.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: health records should make integration reliability diagnosable while keeping provider content and link targets out of durable operational telemetry.
+
 ---
