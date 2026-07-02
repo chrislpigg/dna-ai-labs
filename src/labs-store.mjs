@@ -98,6 +98,11 @@ export class SqliteLabsStorage {
         flag_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
         FOREIGN KEY(updated_by) REFERENCES users(id)
       );
+      CREATE TABLE IF NOT EXISTS role_assignments (
+        user_id TEXT PRIMARY KEY, assigned_role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+        assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id), FOREIGN KEY(assigned_by) REFERENCES users(id)
+      );
       CREATE TABLE IF NOT EXISTS intake_revisions (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision_number INTEGER NOT NULL, content_json TEXT NOT NULL,
         submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL,
@@ -192,7 +197,9 @@ export class SqliteLabsStorage {
   }
 
   actor(id) {
-    const actor = this.db.prepare("SELECT id, name, role FROM users WHERE id = ? AND active = 1").get(id);
+    const actor = this.db.prepare(`SELECT users.id, users.name, COALESCE(role_assignments.assigned_role, users.role) AS role
+      FROM users LEFT JOIN role_assignments ON role_assignments.user_id = users.id AND role_assignments.active = 1
+      WHERE users.id = ? AND users.active = 1`).get(id);
     if (!actor) throw new WorkflowError("UNAUTHENTICATED", "A valid authenticated user is required.", 401);
     return actor;
   }
@@ -602,6 +609,27 @@ export class SqliteLabsStorage {
       VALUES (?, ?, ?, ?)
       ON CONFLICT(flag_key) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
       .run(flag.key, flag.enabled ? 1 : 0, flag.updatedAt, flag.updatedBy);
+  }
+
+  serializeRoleAssignment(row) {
+    return { userId: row.user_id, role: row.assigned_role, active: Boolean(row.active), assignedBy: row.assigned_by, assignedAt: row.assigned_at };
+  }
+
+  listRoleAssignments() {
+    return this.db.prepare("SELECT user_id, assigned_role, active, assigned_by, assigned_at FROM role_assignments ORDER BY user_id").all()
+      .map(row => this.serializeRoleAssignment(row));
+  }
+
+  getRoleAssignment(userId) {
+    const row = this.db.prepare("SELECT user_id, assigned_role, active, assigned_by, assigned_at FROM role_assignments WHERE user_id = ?").get(userId);
+    return row ? this.serializeRoleAssignment(row) : null;
+  }
+
+  upsertRoleAssignment(assignment) {
+    this.db.prepare(`INSERT INTO role_assignments (user_id, assigned_role, active, assigned_by, assigned_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET assigned_role = excluded.assigned_role, active = excluded.active, assigned_by = excluded.assigned_by, assigned_at = excluded.assigned_at`)
+      .run(assignment.userId, assignment.role, assignment.active ? 1 : 0, assignment.assignedBy, assignment.assignedAt);
   }
 
   transaction(work) {

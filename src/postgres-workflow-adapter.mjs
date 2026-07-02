@@ -79,6 +79,8 @@ const triageParticipantRoles = [roles.SUBMITTER, roles.PROJECT_LEAD, roles.RECEI
 const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN];
 const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
 const cycleCapacityStages = new Set([stages.SELECTED, stages.INCUBATING, stages.DECISION_PENDING]);
+const assignableRoles = Object.freeze(Object.values(roles));
+const finalDecisionAuthorizationRoles = Object.freeze([roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN]);
 
 function normalizeTriageComment(input = {}, kind = "comment") {
   if (!triageCommentKinds.includes(kind)) throw new WorkflowError("INVALID_TRIAGE_COMMENT_KIND", "Triage comment type is invalid.", 422);
@@ -192,6 +194,14 @@ class PostgresTransaction {
       VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (organization_id, flag_key) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`, [
       this.organizationId, flag.key, flag.enabled, flag.updatedAt, flag.updatedBy
+    ]);
+  }
+
+  async upsertRoleAssignment(assignment) {
+    await this.query(`INSERT INTO role_assignments (organization_id, user_id, assigned_role, active, assigned_by, assigned_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (organization_id, user_id) DO UPDATE SET assigned_role = EXCLUDED.assigned_role, active = EXCLUDED.active, assigned_by = EXCLUDED.assigned_by, assigned_at = EXCLUDED.assigned_at`, [
+      this.organizationId, assignment.userId, assignment.role, assignment.active, assignment.assignedBy, assignment.assignedAt
     ]);
   }
 
@@ -468,6 +478,30 @@ export class PostgresWorkflowAdapter {
       await tx.appendAudit(actor.id, "feature_flag_updated", "feature_flag", flagKey, { enabled: existing.enabled }, { enabled: next.enabled });
     });
     return this.reads.getFeatureFlag(flagKey);
+  }
+
+  async listRoleAssignments(actor) {
+    requireRole(actor, [roles.ADMIN]);
+    return this.reads.listRoleAssignments();
+  }
+
+  async setRoleAssignment(actor, userId, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const targetUserId = String(userId ?? input.userId ?? "").trim();
+    if (!targetUserId) throw new WorkflowError("INVALID_ROLE_ASSIGNMENT", "Role assignment requires a user id.", 422);
+    await this.actor(targetUserId);
+    const role = String(input.role ?? "").trim();
+    if (!assignableRoles.includes(role)) throw new WorkflowError("INVALID_ROLE", "Assigned role is invalid.", 422);
+    const active = input.active === undefined ? true : Boolean(input.active);
+    if (targetUserId === actor.id && active && finalDecisionAuthorizationRoles.includes(role)) throw new WorkflowError("SELF_ROLE_ESCALATION", "Administrators cannot grant themselves final-decision authorization.", 403);
+    const existing = await this.reads.getRoleAssignment(targetUserId);
+    const timestamp = now();
+    const next = { userId: targetUserId, role, active, assignedBy: actor.id, assignedAt: timestamp };
+    await this.transaction(async tx => {
+      await tx.upsertRoleAssignment(next);
+      await tx.appendAudit(actor.id, "role_assignment_updated", "role_assignment", targetUserId, existing ? { role: existing.role, active: existing.active } : null, { role: next.role, active: next.active });
+    });
+    return this.reads.getRoleAssignment(targetUserId);
   }
 
   async createCycle(actor, input = {}) {

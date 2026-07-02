@@ -9,6 +9,7 @@ export const storagePortMethods = Object.freeze([
   "getActor", "listUsers", "getProject", "getProjectIncludingDeleted", "listProjects",
   "listCycles", "getCycle", "insertCycle", "updateCycle", "cycleCapacityUsage",
   "listFeatureFlags", "getFeatureFlag", "upsertFeatureFlag",
+  "listRoleAssignments", "getRoleAssignment", "upsertRoleAssignment",
   "insertIntakeDraft", "getIntakeDraft", "listIntakeDrafts", "updateIntakeDraft",
   "updateIntakeDraftStatus",
   "insertIntakeDraftCollaborator", "deleteIntakeDraftCollaborator",

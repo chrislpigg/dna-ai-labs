@@ -20,10 +20,21 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("role assignment migration stores audited application role metadata", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "015_role_assignments");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS role_assignments/);
+  assert.match(migration.sql, /assigned_role TEXT NOT NULL/);
+  assert.match(migration.sql, /PRIMARY KEY \(organization_id, user_id\)/);
+  assert.match(migration.sql, /role_assignments_user_organization_fk FOREIGN KEY \(user_id, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.match(migration.sql, /role_assignments_assigned_by_organization_fk FOREIGN KEY \(assigned_by, organization_id\) REFERENCES users\(id, organization_id\)/);
+  assert.match(migration.sql, /role_assignments_organization_role_idx/);
 });
 
 test("feature flag migration stores tenant-scoped pilot controls", () => {

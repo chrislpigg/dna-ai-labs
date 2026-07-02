@@ -31,6 +31,9 @@ test("workflow service operates through the storage port and preserves durable a
     assert.equal(storagePortMethods.includes("listFeatureFlags"), true);
     assert.equal(storagePortMethods.includes("getFeatureFlag"), true);
     assert.equal(storagePortMethods.includes("upsertFeatureFlag"), true);
+    assert.equal(storagePortMethods.includes("listRoleAssignments"), true);
+    assert.equal(storagePortMethods.includes("getRoleAssignment"), true);
+    assert.equal(storagePortMethods.includes("upsertRoleAssignment"), true);
     assert.equal(storagePortMethods.includes("insertIntakeDraft"), true);
     assert.equal(storagePortMethods.includes("updateIntakeDraft"), true);
     assert.equal(storagePortMethods.includes("updateIntakeDraftStatus"), true);

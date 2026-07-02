@@ -115,6 +115,33 @@ export class PostgresReadAdapter {
     return (await this.listFeatureFlags()).find(flag => flag.key === key) || null;
   }
 
+  serializeRoleAssignment(row) {
+    return {
+      userId: row.user_id,
+      role: row.assigned_role,
+      active: Boolean(row.active),
+      assignedBy: row.assigned_by,
+      assignedAt: dateValue(row.assigned_at)
+    };
+  }
+
+  async listRoleAssignments() {
+    const result = await this.query(
+      "SELECT user_id, assigned_role, active, assigned_by, assigned_at FROM role_assignments WHERE organization_id = $1 ORDER BY user_id",
+      [this.organizationId]
+    );
+    return asRows(result).map(row => this.serializeRoleAssignment(row));
+  }
+
+  async getRoleAssignment(userId) {
+    const result = await this.query(
+      "SELECT user_id, assigned_role, active, assigned_by, assigned_at FROM role_assignments WHERE organization_id = $1 AND user_id = $2",
+      [this.organizationId, requiredText(userId, "user id")]
+    );
+    const row = asRows(result)[0];
+    return row ? this.serializeRoleAssignment(row) : null;
+  }
+
   serializeIntakeDraft(row) {
     const collaborators = Array.isArray(row.collaborators) ? row.collaborators : [];
     const explicitIds = new Set(collaborators.map(collaborator => collaborator.userId));

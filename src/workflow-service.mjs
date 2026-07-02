@@ -72,6 +72,8 @@ const triageReviewerRoles = [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLAT
 const triageCommentKinds = Object.freeze(["comment", "request_for_information"]);
 const cycleCapacityStages = new Set([stages.SELECTED, stages.INCUBATING, stages.DECISION_PENDING]);
 const cycleStatuses = Object.freeze(["planned", "active", "closed"]);
+const assignableRoles = Object.freeze(Object.values(roles));
+const finalDecisionAuthorizationRoles = Object.freeze([roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.PLATFORM_REVIEWER, roles.STEERING_REVIEWER, roles.ADMIN]);
 
 function dateOnly(value, label) {
   const text = String(value ?? "").trim();
@@ -187,6 +189,32 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "feature_flag_updated", "feature_flag", flagKey, { enabled: existing.enabled }, { enabled: next.enabled });
     });
     return this.storage.getFeatureFlag(flagKey);
+  }
+
+  listRoleAssignments(actor) {
+    requireRole(actor, [roles.ADMIN]);
+    return this.storage.listRoleAssignments();
+  }
+
+  setRoleAssignment(actor, userId, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const targetUserId = String(userId ?? input.userId ?? "").trim();
+    if (!targetUserId) throw new WorkflowError("INVALID_ROLE_ASSIGNMENT", "Role assignment requires a user id.", 422);
+    this.actor(targetUserId);
+    const role = String(input.role ?? "").trim();
+    if (!assignableRoles.includes(role)) throw new WorkflowError("INVALID_ROLE", "Assigned role is invalid.", 422);
+    const active = input.active === undefined ? true : Boolean(input.active);
+    if (targetUserId === actor.id && active && finalDecisionAuthorizationRoles.includes(role)) {
+      throw new WorkflowError("SELF_ROLE_ESCALATION", "Administrators cannot grant themselves final-decision authorization.", 403);
+    }
+    const existing = this.storage.getRoleAssignment(targetUserId);
+    const timestamp = now();
+    const next = { userId: targetUserId, role, active, assignedBy: actor.id, assignedAt: timestamp };
+    this.storage.transaction(() => {
+      this.storage.upsertRoleAssignment(next);
+      this.storage.appendAudit(actor.id, "role_assignment_updated", "role_assignment", targetUserId, existing ? { role: existing.role, active: existing.active } : null, { role: next.role, active: next.active });
+    });
+    return this.storage.getRoleAssignment(targetUserId);
   }
 
   createCycle(actor, input = {}) {

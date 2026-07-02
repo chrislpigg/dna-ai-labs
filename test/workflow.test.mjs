@@ -272,6 +272,27 @@ test("feature flags are admin-controlled and enforced by protected workflow feat
   } finally { dispose(); }
 });
 
+test("role assignments are admin-only, audited, and block self-escalation", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    expectWorkflowError(() => store.listRoleAssignments(store.actor("lab-lead")), "FORBIDDEN");
+    expectWorkflowError(() => store.setRoleAssignment(store.actor("lab-lead"), "employee-1", { role: "submitter" }), "FORBIDDEN");
+    expectWorkflowError(() => store.setRoleAssignment(admin, "employee-1", { role: "not-a-role" }), "INVALID_ROLE");
+    expectWorkflowError(() => store.setRoleAssignment(admin, "admin", { role: "lab-lead" }), "SELF_ROLE_ESCALATION");
+
+    const assignment = store.setRoleAssignment(admin, "employee-1", { role: "submitter" });
+    assert.equal(assignment.role, "submitter");
+    assert.equal(assignment.active, true);
+    assert.equal(store.actor("employee-1").role, "submitter");
+    const disabled = store.setRoleAssignment(admin, "employee-1", { role: "submitter", active: false });
+    assert.equal(disabled.active, false);
+    assert.equal(store.actor("employee-1").role, "employee");
+    assert.equal(store.listRoleAssignments(admin).some(item => item.userId === "employee-1"), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "role_assignment_updated" && event.entityId === "employee-1"), true);
+  } finally { dispose(); }
+});
+
 test("only Lab leadership can select and start an incubation", () => {
   const { store, dispose } = createStore();
   try {
