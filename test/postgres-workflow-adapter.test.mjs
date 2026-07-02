@@ -42,6 +42,8 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
     await tx.upsertReview({ projectId: "project-1", reviewType: "accessibility", status: "complete", evidenceLink: "https://docs.example/review", completedBy: "user-1", completedAt: "2026-06-20T00:00:00.000Z", exceptionReason: null });
     await tx.upsertDeliveryKitItem({ projectId: "project-1", itemKey: "architecture", status: "complete", ownerId: "user-1", evidenceLink: "https://docs.example/architecture", acceptedAt: "2026-06-20T00:00:00.000Z", acceptedBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
     await tx.deleteDeliveryKitItem("project-1", "architecture");
+    await tx.upsertProjectWorkItem({ projectId: "project-1", provider: "tracker", externalRef: "WORK-123", externalUrl: "https://tracker.example/browse/WORK-123", externalStatus: "in_progress", lastVerifiedAt: "2026-06-20T00:15:00.000Z", linkedBy: "user-1", linkedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1", updatedAt: "2026-06-20T00:15:00.000Z" });
+    await tx.getProjectWorkItem("project-1");
     await tx.insertFellowAssignment({ id: "fellow-1", cycleId: "cycle-1", projectId: "project-1", fellowId: "user-4", assignmentRole: "Builder", capacityUnits: 1, status: "proposed", managerId: "user-2", managerAcknowledgedAt: null, managerAcknowledgedBy: null, outcome: null, createdAt: "2026-06-20T00:00:00.000Z", createdBy: "user-1", updatedAt: "2026-06-20T00:00:00.000Z", updatedBy: "user-1" });
     await tx.updateFellowAssignment("fellow-1", { assignmentRole: "Builder", capacityUnits: 1, status: "active", managerId: "user-2", managerAcknowledgedAt: "2026-06-20T00:05:00.000Z", managerAcknowledgedBy: "user-2", outcome: null, updatedAt: "2026-06-20T00:05:00.000Z", updatedBy: "user-2" });
     await tx.insertDecision({ id: "decision-1", projectId: "project-1", outcome: "Scale", rationale: "Measured result", status: "requested", requestedBy: "user-1", requestedAt: "2026-06-20T00:00:00.000Z" });
@@ -54,7 +56,7 @@ test("PostgreSQL workflow writes project, evidence, review, decision, approval, 
   const sql = client.calls.map(call => call.sql);
   assert.equal(sql[0], "BEGIN");
   assert.equal(sql.at(-1), "COMMIT");
-  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "evidence_entries", "project_reviews", "delivery_kit_items", "fellow_assignments", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
+  for (const table of ["cycles", "feature_flags", "role_assignments", "intake_drafts", "intake_draft_collaborators", "projects", "intake_revisions", "project_triage_comments", "evidence_entries", "project_reviews", "delivery_kit_items", "project_work_items", "fellow_assignments", "decisions", "approvals", "handoffs", "audit_events"]) assert.equal(sql.some(statement => statement.includes(`INSERT INTO ${table}`)), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE cycles")), true);
   assert.equal(sql.some(statement => statement.includes("UPDATE intake_drafts")), true);
   assert.equal(sql.some(statement => statement.includes("target = $11")), true);

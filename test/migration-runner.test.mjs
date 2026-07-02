@@ -20,10 +20,21 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments", "018_artifact_verification_metadata", "019_project_work_items"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
+});
+
+test("project work item migration stores tenant-scoped work-tracking metadata", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "019_project_work_items");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS project_work_items/);
+  assert.match(migration.sql, /external_status TEXT NOT NULL DEFAULT 'unknown'/);
+  assert.match(migration.sql, /last_verified_at TIMESTAMPTZ NOT NULL/);
+  assert.match(migration.sql, /PRIMARY KEY \(organization_id, project_id\)/);
+  assert.match(migration.sql, /project_work_items_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /project_work_items_status_idx ON project_work_items \(organization_id, external_status, last_verified_at\)/);
 });
 
 test("artifact verification migration stores approved-link verification metadata", () => {

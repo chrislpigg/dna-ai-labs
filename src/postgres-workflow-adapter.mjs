@@ -10,6 +10,7 @@ import { enrichProjectDirectoryContext } from "./directory-context.mjs";
 import { defaultDeliveryKitItems, normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifier.mjs";
+import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -379,6 +380,28 @@ class PostgresTransaction {
     await this.query("DELETE FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 AND item_key = $3", [this.organizationId, projectId, itemKey]);
   }
 
+  async getProjectWorkItem(projectId) {
+    const result = await this.query(`SELECT project_id AS "projectId", provider, external_ref AS "externalRef", external_url AS "externalUrl",
+      external_status AS "externalStatus", last_verified_at AS "lastVerifiedAt", linked_by AS "linkedBy", linked_at AS "linkedAt",
+      updated_by AS "updatedBy", updated_at AS "updatedAt"
+      FROM project_work_items WHERE organization_id = $1 AND project_id = $2`, [this.organizationId, projectId]);
+    return result.rows?.[0] || null;
+  }
+
+  async upsertProjectWorkItem(item) {
+    await this.query(`INSERT INTO project_work_items (
+        project_id, organization_id, provider, external_ref, external_url, external_status, last_verified_at,
+        linked_by, linked_at, updated_by, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (organization_id, project_id) DO UPDATE SET provider = EXCLUDED.provider,
+        external_ref = EXCLUDED.external_ref, external_url = EXCLUDED.external_url,
+        external_status = EXCLUDED.external_status, last_verified_at = EXCLUDED.last_verified_at,
+        updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at`, [
+      item.projectId, this.organizationId, item.provider, item.externalRef, item.externalUrl, item.externalStatus,
+      item.lastVerifiedAt, item.linkedBy, item.linkedAt, item.updatedBy, item.updatedAt
+    ]);
+  }
+
   async listFellowAssignments(filters = {}) {
     const clauses = [];
     const params = [this.organizationId];
@@ -505,7 +528,7 @@ class PostgresTransaction {
 
 /** Authoritative PostgreSQL workflow adapter. Every mutation includes its audit event in one transaction. */
 export class PostgresWorkflowAdapter {
-  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier } = {}) {
+  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter() } = {}) {
     if (!queryable || typeof queryable.query !== "function" || typeof queryable.connect !== "function") throw new TypeError("A PostgreSQL pool with connect() is required.");
     this.queryable = queryable;
     this.organizationId = requiredText(organizationId, "organizationId");
@@ -513,6 +536,7 @@ export class PostgresWorkflowAdapter {
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
     this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
+    this.workTracking = workTrackingAdapter;
   }
 
   async transaction(work) {
@@ -1041,6 +1065,61 @@ export class PostgresWorkflowAdapter {
     return (await this.project(projectId)).deliveryKit.find(existing => existing.itemKey === key);
   }
 
+  async createOrLinkWorkItem(actor, projectId, input = {}) {
+    await this.requireFeatureEnabled("work_tracking_integration");
+    const project = await this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const before = await this.transaction(tx => tx.getProjectWorkItem(projectId));
+    const verified = await this.workTracking.createOrLink(input, { projectId, actorId: actor.id });
+    const timestamp = now();
+    const next = {
+      projectId,
+      provider: verified.provider,
+      externalRef: verified.externalRef,
+      externalUrl: verified.externalUrl,
+      externalStatus: verified.externalStatus,
+      lastVerifiedAt: verified.lastVerifiedAt,
+      linkedBy: before?.linkedBy || actor.id,
+      linkedAt: before?.linkedAt || timestamp,
+      updatedBy: actor.id,
+      updatedAt: timestamp
+    };
+    await this.transaction(async tx => {
+      await tx.upsertProjectWorkItem(next);
+      await tx.appendAudit(actor.id, before ? "work_item_linked" : "work_item_created", "project_work_item", projectId, before, {
+        provider: next.provider, externalRef: next.externalRef, externalStatus: next.externalStatus, lastVerifiedAt: next.lastVerifiedAt
+      });
+    });
+    return this.transaction(tx => tx.getProjectWorkItem(projectId));
+  }
+
+  async refreshWorkItem(actor, projectId) {
+    await this.requireFeatureEnabled("work_tracking_integration");
+    const project = await this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const before = await this.transaction(tx => tx.getProjectWorkItem(projectId));
+    if (!before) throw new WorkflowError("WORK_ITEM_NOT_FOUND", "Project does not have a linked work item.", 404);
+    const verified = await this.workTracking.refresh(before, { projectId, actorId: actor.id });
+    const timestamp = now();
+    const next = {
+      ...before,
+      provider: verified.provider,
+      externalRef: verified.externalRef,
+      externalUrl: verified.externalUrl,
+      externalStatus: verified.externalStatus,
+      lastVerifiedAt: verified.lastVerifiedAt,
+      updatedBy: actor.id,
+      updatedAt: timestamp
+    };
+    await this.transaction(async tx => {
+      await tx.upsertProjectWorkItem(next);
+      await tx.appendAudit(actor.id, "work_item_refreshed", "project_work_item", projectId, before, {
+        provider: next.provider, externalRef: next.externalRef, externalStatus: next.externalStatus, lastVerifiedAt: next.lastVerifiedAt
+      });
+    });
+    return this.transaction(tx => tx.getProjectWorkItem(projectId));
+  }
+
   async listFellowAssignments(actor, filters = {}) {
     requireRole(actor, Object.values(roles));
     return this.transaction(tx => tx.listFellowAssignments({
@@ -1210,6 +1289,6 @@ export class PostgresWorkflowAdapter {
   }
 }
 
-export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, PoolConstructor = Pool } = {}) {
-  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier });
+export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, PoolConstructor = Pool } = {}) {
+  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter });
 }

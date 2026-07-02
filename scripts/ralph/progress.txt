@@ -319,4 +319,13 @@ Started: 2026-06-20
 - Files changed: `migrations/018_artifact_verification_metadata.sql`, `src/artifact-verifier.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `package.json`, `test/artifact-verifier.test.mjs`, `test/migration-runner.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: link allow-listing is necessary but not sufficient; workflow gates should only complete after the artifact adapter returns an explicit verified result.
 
+## 2026-07-02 — US-037 Add work-tracking integration adapter
+
+- Added a work-tracking adapter boundary for create/link and refresh operations with approved work-item URL validation, timeout handling, and fail-closed provider errors.
+- Added a project work-item model storing provider, external reference, approved URL, external status, and last verified time across SQLite and tenant-scoped PostgreSQL paths.
+- Added feature-gated create/link and refresh workflow/API mutations for project leads, lab leads, and admins, with durable audit events and no raw work-tracking payload storage.
+- Verification: `npm test` (106 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/019_project_work_items.sql`, `server.mjs`, `src/labs-store.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/work-tracking-adapter.mjs`, `src/workflow-service.mjs`, `package.json`, `test/migration-runner.test.mjs`, `test/postgres-read-adapter.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/work-tracking-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: external work state should be a verified reference and status snapshot, not a mirrored work-tracker record or issue payload.
+
 ---

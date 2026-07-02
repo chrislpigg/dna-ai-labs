@@ -7,6 +7,7 @@ import { ArtifactVerifier, artifactVerificationFields } from "./artifact-verifie
 import { enrichProjectDirectoryContextSync } from "./directory-context.mjs";
 import { normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
 import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
+import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -150,11 +151,12 @@ function draftCollaboratorIds(draft) {
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
-  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier } = {}) {
+  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter() } = {}) {
     this.storage = assertStoragePort(storage);
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
     this.artifactVerifier = artifactVerifier || new ArtifactVerifier({ approvedOrigins: approvedArtifactOrigins });
+    this.workTracking = workTrackingAdapter;
   }
 
   actor(id) { return this.storage.getActor(id); }
@@ -704,6 +706,61 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "delivery_kit_item_deleted", "delivery_kit_item", `${projectId}:${key}`, before, null);
     });
     return this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key);
+  }
+
+  createOrLinkWorkItem(actor, projectId, input = {}) {
+    this.requireFeatureEnabled("work_tracking_integration");
+    const project = this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const before = this.storage.getProjectWorkItem(projectId);
+    const verified = this.workTracking.createOrLinkSync(input, { projectId, actorId: actor.id });
+    const timestamp = now();
+    const next = {
+      projectId,
+      provider: verified.provider,
+      externalRef: verified.externalRef,
+      externalUrl: verified.externalUrl,
+      externalStatus: verified.externalStatus,
+      lastVerifiedAt: verified.lastVerifiedAt,
+      linkedBy: before?.linkedBy || actor.id,
+      linkedAt: before?.linkedAt || timestamp,
+      updatedBy: actor.id,
+      updatedAt: timestamp
+    };
+    this.storage.transaction(() => {
+      this.storage.upsertProjectWorkItem(next);
+      this.storage.appendAudit(actor.id, before ? "work_item_linked" : "work_item_created", "project_work_item", projectId, before, {
+        provider: next.provider, externalRef: next.externalRef, externalStatus: next.externalStatus, lastVerifiedAt: next.lastVerifiedAt
+      });
+    });
+    return this.storage.getProjectWorkItem(projectId);
+  }
+
+  refreshWorkItem(actor, projectId) {
+    this.requireFeatureEnabled("work_tracking_integration");
+    const project = this.project(projectId);
+    this.requireDeliveryKitWriteAccess(actor, project);
+    const before = this.storage.getProjectWorkItem(projectId);
+    if (!before) throw new WorkflowError("WORK_ITEM_NOT_FOUND", "Project does not have a linked work item.", 404);
+    const verified = this.workTracking.refreshSync(before, { projectId, actorId: actor.id });
+    const timestamp = now();
+    const next = {
+      ...before,
+      provider: verified.provider,
+      externalRef: verified.externalRef,
+      externalUrl: verified.externalUrl,
+      externalStatus: verified.externalStatus,
+      lastVerifiedAt: verified.lastVerifiedAt,
+      updatedBy: actor.id,
+      updatedAt: timestamp
+    };
+    this.storage.transaction(() => {
+      this.storage.upsertProjectWorkItem(next);
+      this.storage.appendAudit(actor.id, "work_item_refreshed", "project_work_item", projectId, before, {
+        provider: next.provider, externalRef: next.externalRef, externalStatus: next.externalStatus, lastVerifiedAt: next.lastVerifiedAt
+      });
+    });
+    return this.storage.getProjectWorkItem(projectId);
   }
 
   listFellowAssignments(actor, filters = {}) {

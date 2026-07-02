@@ -215,11 +215,12 @@ export class PostgresReadAdapter {
     const rows = asRows(projectResult);
     if (!rows.length) return [];
     const projectIds = rows.map(row => row.id);
-    const [gatesResult, evidenceResult, reviewsResult, deliveryKitResult, decisionsResult, approvalsResult, handoffsResult] = await Promise.all([
+    const [gatesResult, evidenceResult, reviewsResult, deliveryKitResult, workItemsResult, decisionsResult, approvalsResult, handoffsResult] = await Promise.all([
       this.query("SELECT project_id, gate_key, status, evidence_link, completed_by, completed_at, exception_reason, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM project_gates WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY gate_key", [this.organizationId, projectIds]),
       this.query("SELECT id, project_id, evidence_type, result, sample_size, confidence, source_link, observed_at, created_by, created_at, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM evidence_entries WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY observed_at DESC, created_at DESC", [this.organizationId, projectIds]),
       this.query("SELECT project_id, review_type, status, evidence_link, completed_by, completed_at, exception_reason, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM project_reviews WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY review_type", [this.organizationId, projectIds]),
       this.query("SELECT project_id, item_key, status, owner_id, evidence_link, accepted_at, accepted_by, updated_at, updated_by, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM delivery_kit_items WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY item_key", [this.organizationId, projectIds]),
+      this.query("SELECT project_id, provider, external_ref, external_url, external_status, last_verified_at, linked_by, linked_at, updated_by, updated_at FROM project_work_items WHERE organization_id = $1 AND project_id = ANY($2::text[])", [this.organizationId, projectIds]),
       this.query("SELECT id, project_id, outcome, rationale, status, requested_by, requested_at, finalized_by, finalized_at FROM decisions WHERE organization_id = $1 AND project_id = ANY($2::text[]) ORDER BY requested_at DESC", [this.organizationId, projectIds]),
       this.query("SELECT a.decision_id, a.approver_id, a.approver_role, a.result, a.comment, a.created_at FROM approvals a JOIN decisions d ON d.id = a.decision_id AND d.organization_id = a.organization_id WHERE a.organization_id = $1 AND d.project_id = ANY($2::text[]) ORDER BY a.created_at", [this.organizationId, projectIds]),
       this.query("SELECT project_id, receiving_owner_id, status, adoption_plan_link, support_end_date, follow_up_date, onboarding_acknowledged, accepted_by, accepted_at, artifact_verification_status, artifact_verified_at, artifact_verification_method FROM handoffs WHERE organization_id = $1 AND project_id = ANY($2::text[])", [this.organizationId, projectIds])
@@ -256,6 +257,12 @@ export class PostgresReadAdapter {
       artifactVerificationStatus: row.artifact_verification_status || null,
       artifactVerifiedAt: dateValue(row.artifact_verified_at),
       artifactVerificationMethod: row.artifact_verification_method || null
+    });
+    const workItems = new Map();
+    for (const row of asRows(workItemsResult)) workItems.set(row.project_id, {
+      projectId: row.project_id, provider: row.provider, externalRef: row.external_ref, externalUrl: row.external_url,
+      externalStatus: row.external_status, lastVerifiedAt: dateValue(row.last_verified_at),
+      linkedBy: row.linked_by, linkedAt: dateValue(row.linked_at), updatedBy: row.updated_by, updatedAt: dateValue(row.updated_at)
     });
     const decisions = new Map();
     for (const row of asRows(decisionsResult)) appendByProject(decisions, row.project_id, {
@@ -298,6 +305,7 @@ export class PostgresReadAdapter {
         evidence: evidence.get(row.id) || [], reviews: projectReviews, reviewRequirements,
         reviewsComplete: reviewRequirements.every(type => projectReviews.some(review => review.reviewType === type && ["complete", "excepted"].includes(review.status))),
         deliveryKit: projectDeliveryKit,
+        workItem: workItems.get(row.id) || null,
         decisionHistory: projectDecisions.slice(0, 5),
         pendingDecision: pending ? {
           ...pending, approvals: approvals.get(pending.id) || [],

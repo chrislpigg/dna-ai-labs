@@ -7,6 +7,7 @@ import { LabsStore } from "../src/labs-store.mjs";
 import { WorkflowError, outcomes, stages } from "../src/workflow-policy.mjs";
 import { DirectoryAdapter } from "../src/directory-adapter.mjs";
 import { ArtifactVerifier } from "../src/artifact-verifier.mjs";
+import { WorkTrackingAdapter } from "../src/work-tracking-adapter.mjs";
 
 function createStore(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "dna-ai-labs-"));
@@ -344,6 +345,55 @@ test("delivery-kit gate exceptions are audited for transfer readiness", () => {
     const pending = store.project(project.id).gates.find(gate => gate.key === "delivery_kit");
     assert.equal(pending.status, "excepted");
     assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "delivery_kit_exception_accepted" && event.entityId === `${project.id}:delivery_kit`), true);
+  } finally { dispose(); }
+});
+
+test("work tracking is feature-gated, provider-verified, refreshed, and audited", () => {
+  let providerFails = true;
+  const workTrackingAdapter = new WorkTrackingAdapter({
+    approvedOrigins: ["https://tracker.example"],
+    linkWorkItemSync: ({ externalUrl }) => {
+      if (providerFails) throw new Error("tracker unavailable");
+      return {
+        provider: "tracker",
+        externalRef: "WORK-123",
+        externalUrl,
+        externalStatus: "in_progress",
+        lastVerifiedAt: "2026-07-02T00:00:00.000Z"
+      };
+    },
+    refreshWorkItemSync: ({ item }) => ({
+      provider: item.provider,
+      externalRef: item.externalRef,
+      externalUrl: item.externalUrl,
+      externalStatus: "done",
+      lastVerifiedAt: "2026-07-02T01:00:00.000Z"
+    })
+  });
+  const { store, dispose } = createStore({ workTrackingAdapter });
+  try {
+    const admin = store.actor("admin");
+    const lead = store.actor("accessibility-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+
+    expectWorkflowError(() => store.createOrLinkWorkItem(lead, project.id, { externalUrl: "https://tracker.example/browse/WORK-123" }), "FEATURE_DISABLED");
+    store.setFeatureFlag(admin, "work_tracking_integration", { enabled: true });
+    expectWorkflowError(() => store.createOrLinkWorkItem(store.actor("receiving-owner"), project.id, { externalUrl: "https://tracker.example/browse/WORK-123" }), "FORBIDDEN");
+    expectWorkflowError(() => store.createOrLinkWorkItem(lead, project.id, { externalUrl: "https://external.example/browse/WORK-123" }), "UNAPPROVED_WORK_ITEM_LINK");
+    expectWorkflowError(() => store.createOrLinkWorkItem(lead, project.id, { externalUrl: "https://tracker.example/browse/WORK-123" }), "WORK_TRACKING_UNAVAILABLE");
+    assert.equal(store.project(project.id).workItem, null);
+
+    providerFails = false;
+    const linked = store.createOrLinkWorkItem(lead, project.id, { externalUrl: "https://tracker.example/browse/WORK-123" });
+    assert.equal(linked.externalStatus, "in_progress");
+    assert.equal(linked.lastVerifiedAt, "2026-07-02T00:00:00.000Z");
+    assert.equal(store.project(project.id).workItem.externalRef, "WORK-123");
+
+    const refreshed = store.refreshWorkItem(lead, project.id);
+    assert.equal(refreshed.externalStatus, "done");
+    assert.equal(refreshed.lastVerifiedAt, "2026-07-02T01:00:00.000Z");
+    assert.equal(store.auditEvents(admin).some(event => event.action === "work_item_created" && event.entityId === project.id), true);
+    assert.equal(store.auditEvents(admin).some(event => event.action === "work_item_refreshed" && event.entityId === project.id), true);
   } finally { dispose(); }
 });
 

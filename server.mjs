@@ -162,6 +162,10 @@ async function api(req, res, url) {
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/delivery-kit\/([a-z_]+)$/);
   if (req.method === "PUT" && match) return respond(res, 200, { item: await workflow.upsertDeliveryKitItem(requestActor, match[1], match[2], await body(req)) });
   if (req.method === "DELETE" && match) return respond(res, 200, { item: await workflow.deleteDeliveryKitItem(requestActor, match[1], match[2]) });
+  match = path.match(/^\/api\/v1\/projects\/([^/]+)\/work-item$/);
+  if (req.method === "POST" && match) return respond(res, 200, { workItem: await workflow.createOrLinkWorkItem(requestActor, match[1], await body(req)) });
+  match = path.match(/^\/api\/v1\/projects\/([^/]+)\/work-item\/refresh$/);
+  if (req.method === "POST" && match) return respond(res, 200, { workItem: await workflow.refreshWorkItem(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/reviews\/([a-z_]+)$/);
   if (req.method === "PUT" && match) return respond(res, 200, { project: await workflow.setReview(requestActor, match[1], match[2], await body(req)) });
   match = path.match(/^\/api\/v1\/projects\/([^/]+)\/gates\/([a-z_]+)$/);
