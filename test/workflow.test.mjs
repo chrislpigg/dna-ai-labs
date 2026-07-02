@@ -334,6 +334,37 @@ test("delivery-kit items are required, owner-assigned, approved-link backed, and
   } finally { dispose(); }
 });
 
+test("Fellow assignments require manager acknowledgement before activation", () => {
+  const { store, dispose } = createStore();
+  try {
+    const labLead = store.actor("lab-lead");
+    const project = store.createIntake(store.actor("submitter-1"), validIntake);
+    expectWorkflowError(() => store.createFellowAssignment(store.actor("submitter-1"), {
+      cycleId: project.cycleId, projectId: project.id, fellowId: "employee-1", assignmentRole: "Pilot builder", capacityUnits: 1
+    }), "FORBIDDEN");
+    expectWorkflowError(() => store.createFellowAssignment(labLead, {
+      cycleId: project.cycleId, projectId: project.id, fellowId: "employee-1", assignmentRole: "Pilot builder", capacityUnits: 1, status: "active"
+    }), "MANAGER_ACK_REQUIRED");
+
+    const assignment = store.createFellowAssignment(labLead, {
+      cycleId: project.cycleId, projectId: project.id, fellowId: "employee-1", assignmentRole: "Pilot builder", capacityUnits: 1
+    });
+    assert.equal(assignment.status, "proposed");
+    assert.equal(assignment.managerId, "admin");
+    expectWorkflowError(() => store.updateFellowAssignment(labLead, assignment.id, { status: "active" }), "MANAGER_ACK_REQUIRED");
+    expectWorkflowError(() => store.acknowledgeFellowAssignment(store.actor("lab-lead"), assignment.id), "FORBIDDEN");
+
+    const active = store.acknowledgeFellowAssignment(store.actor("admin"), assignment.id);
+    assert.equal(active.status, "active");
+    assert.equal(active.managerAcknowledgedBy, "admin");
+    assert.equal(store.updateFellowAssignment(labLead, assignment.id, { status: "completed", outcome: "Reusable workflow documented" }).status, "completed");
+    expectWorkflowError(() => store.acknowledgeFellowAssignment(store.actor("admin"), assignment.id), "INVALID_FELLOW_ASSIGNMENT_STATE");
+    assert.equal(store.listFellowAssignments(labLead, { projectId: project.id }).length, 1);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "fellow_assignment_created"), true);
+    assert.equal(store.auditEvents(store.actor("admin")).some(event => event.action === "fellow_assignment_acknowledged"), true);
+  } finally { dispose(); }
+});
+
 test("selection cannot exceed the cycle's approved capacity", () => {
   const { store, dispose } = createStore();
   try {

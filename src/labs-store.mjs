@@ -143,6 +143,16 @@ export class SqliteLabsStorage {
         FOREIGN KEY(owner_id) REFERENCES users(id), FOREIGN KEY(accepted_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
         CHECK(status IN ('not_started', 'in_progress', 'complete'))
       );
+      CREATE TABLE IF NOT EXISTS fellow_assignments (
+        id TEXT PRIMARY KEY, cycle_id TEXT NOT NULL, project_id TEXT NOT NULL, fellow_id TEXT NOT NULL, assignment_role TEXT NOT NULL,
+        capacity_units INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'proposed', manager_id TEXT NOT NULL,
+        manager_acknowledged_at TEXT, manager_acknowledged_by TEXT, outcome TEXT, created_at TEXT NOT NULL, created_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL, updated_by TEXT NOT NULL,
+        FOREIGN KEY(cycle_id) REFERENCES cycles(id), FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY(fellow_id) REFERENCES users(id), FOREIGN KEY(manager_id) REFERENCES users(id),
+        FOREIGN KEY(manager_acknowledged_by) REFERENCES users(id), FOREIGN KEY(created_by) REFERENCES users(id), FOREIGN KEY(updated_by) REFERENCES users(id),
+        CHECK(status IN ('proposed', 'active', 'completed', 'cancelled'))
+      );
       CREATE TABLE IF NOT EXISTS decisions (
         id TEXT PRIMARY KEY, project_id TEXT NOT NULL, outcome TEXT NOT NULL, rationale TEXT NOT NULL, status TEXT NOT NULL,
         requested_by TEXT NOT NULL, requested_at TEXT NOT NULL, finalized_by TEXT, finalized_at TEXT, retention_classification TEXT, retention_until TEXT, FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -842,6 +852,57 @@ export class SqliteLabsStorage {
 
   deleteDeliveryKitItem(projectId, itemKey) {
     this.db.prepare("DELETE FROM delivery_kit_items WHERE project_id = ? AND item_key = ?").run(projectId, itemKey);
+  }
+
+  serializeFellowAssignment(row) {
+    return {
+      id: row.id,
+      cycleId: row.cycle_id,
+      projectId: row.project_id,
+      fellowId: row.fellow_id,
+      assignmentRole: row.assignment_role,
+      capacityUnits: row.capacity_units,
+      status: row.status,
+      managerId: row.manager_id,
+      managerAcknowledgedAt: row.manager_acknowledged_at,
+      managerAcknowledgedBy: row.manager_acknowledged_by,
+      outcome: row.outcome,
+      createdAt: row.created_at,
+      createdBy: row.created_by,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by
+    };
+  }
+
+  listFellowAssignments(filters = {}) {
+    const clauses = [];
+    const params = [];
+    if (filters.cycleId) { clauses.push("cycle_id = ?"); params.push(filters.cycleId); }
+    if (filters.projectId) { clauses.push("project_id = ?"); params.push(filters.projectId); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.db.prepare(`SELECT * FROM fellow_assignments ${where} ORDER BY updated_at DESC, id`).all(...params).map(row => this.serializeFellowAssignment(row));
+  }
+
+  getFellowAssignment(id) {
+    const row = this.db.prepare("SELECT * FROM fellow_assignments WHERE id = ?").get(id);
+    if (!row) throw new WorkflowError("NOT_FOUND", "Fellow assignment not found.", 404);
+    return this.serializeFellowAssignment(row);
+  }
+
+  insertFellowAssignment(assignment) {
+    this.db.prepare(`INSERT INTO fellow_assignments (id, cycle_id, project_id, fellow_id, assignment_role, capacity_units, status, manager_id,
+      manager_acknowledged_at, manager_acknowledged_by, outcome, created_at, created_by, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(assignment.id, assignment.cycleId, assignment.projectId, assignment.fellowId, assignment.assignmentRole, assignment.capacityUnits,
+        assignment.status, assignment.managerId, assignment.managerAcknowledgedAt, assignment.managerAcknowledgedBy, assignment.outcome,
+        assignment.createdAt, assignment.createdBy, assignment.updatedAt, assignment.updatedBy);
+  }
+
+  updateFellowAssignment(id, patch) {
+    this.db.prepare(`UPDATE fellow_assignments SET assignment_role = ?, capacity_units = ?, status = ?, manager_id = ?,
+      manager_acknowledged_at = ?, manager_acknowledged_by = ?, outcome = ?, updated_at = ?, updated_by = ? WHERE id = ?`)
+      .run(patch.assignmentRole, patch.capacityUnits, patch.status, patch.managerId, patch.managerAcknowledgedAt, patch.managerAcknowledgedBy,
+        patch.outcome, patch.updatedAt, patch.updatedBy, id);
   }
 
   getHandoff(projectId) {

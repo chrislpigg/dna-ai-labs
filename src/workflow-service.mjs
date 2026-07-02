@@ -5,6 +5,7 @@ import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPersonSync } from "./directory-adapter.mjs";
 import { enrichProjectDirectoryContextSync } from "./directory-context.mjs";
 import { normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
+import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -697,6 +698,65 @@ export class WorkflowService {
       this.storage.appendAudit(actor.id, "delivery_kit_item_deleted", "delivery_kit_item", `${projectId}:${key}`, before, null);
     });
     return this.storage.listDeliveryKitItems(projectId).find(existing => existing.itemKey === key);
+  }
+
+  listFellowAssignments(actor, filters = {}) {
+    requireRole(actor, Object.values(roles));
+    return this.storage.listFellowAssignments({
+      cycleId: String(filters.cycleId ?? "").trim() || null,
+      projectId: String(filters.projectId ?? "").trim() || null
+    });
+  }
+
+  createFellowAssignment(actor, input = {}) {
+    requireRole(actor, [roles.LAB_LEAD, roles.ADMIN]);
+    const fellow = requireActiveDirectoryPersonSync(this.directory, input.fellowId, "Fellow");
+    const data = normalizeFellowAssignmentInput({ ...input, managerId: input.managerId || fellow.managerId });
+    const project = this.project(data.projectId);
+    this.storage.getCycle(data.cycleId);
+    if (project.cycleId !== data.cycleId) throw new WorkflowError("FELLOW_ASSIGNMENT_SCOPE_MISMATCH", "Fellow assignment cycle must match the project cycle.", 422);
+    this.actor(data.fellowId); this.actor(data.managerId);
+    if (data.status === "active") throw new WorkflowError("MANAGER_ACK_REQUIRED", "Manager acknowledgement is required before a Fellow assignment can become active.", 409);
+    const id = randomUUID(); const timestamp = now();
+    const assignment = { id, ...data, status: data.status, managerAcknowledgedAt: null, managerAcknowledgedBy: null, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id };
+    this.storage.transaction(() => {
+      this.storage.insertFellowAssignment(assignment);
+      this.storage.appendAudit(actor.id, "fellow_assignment_created", "fellow_assignment", id, null, { cycleId: data.cycleId, projectId: data.projectId, fellowId: data.fellowId, status: assignment.status });
+    });
+    return this.storage.getFellowAssignment(id);
+  }
+
+  updateFellowAssignment(actor, id, input = {}) {
+    requireRole(actor, [roles.LAB_LEAD, roles.ADMIN]);
+    const existing = this.storage.getFellowAssignment(id);
+    const data = normalizeFellowAssignmentInput(input, existing);
+    const project = this.project(data.projectId);
+    this.storage.getCycle(data.cycleId);
+    if (project.cycleId !== data.cycleId) throw new WorkflowError("FELLOW_ASSIGNMENT_SCOPE_MISMATCH", "Fellow assignment cycle must match the project cycle.", 422);
+    this.actor(data.fellowId); this.actor(data.managerId);
+    const managerAcknowledgedAt = existing.managerAcknowledgedAt && existing.managerId === data.managerId ? existing.managerAcknowledgedAt : null;
+    const managerAcknowledgedBy = existing.managerAcknowledgedAt && existing.managerId === data.managerId ? existing.managerAcknowledgedBy : null;
+    if (data.status === "active" && !managerAcknowledgedAt) throw new WorkflowError("MANAGER_ACK_REQUIRED", "Manager acknowledgement is required before a Fellow assignment can become active.", 409);
+    const timestamp = now();
+    const patch = { ...data, managerAcknowledgedAt, managerAcknowledgedBy, updatedAt: timestamp, updatedBy: actor.id };
+    this.storage.transaction(() => {
+      this.storage.updateFellowAssignment(id, patch);
+      this.storage.appendAudit(actor.id, "fellow_assignment_updated", "fellow_assignment", id, { status: existing.status, managerId: existing.managerId }, { status: patch.status, managerId: patch.managerId });
+    });
+    return this.storage.getFellowAssignment(id);
+  }
+
+  acknowledgeFellowAssignment(actor, id) {
+    const existing = this.storage.getFellowAssignment(id);
+    if (existing.managerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the assigned Fellow manager can acknowledge this assignment.", 403);
+    if (existing.status !== "proposed") throw new WorkflowError("INVALID_FELLOW_ASSIGNMENT_STATE", "Only proposed Fellow assignments can be acknowledged.", 409);
+    const timestamp = now();
+    const patch = { ...existing, status: "active", managerAcknowledgedAt: timestamp, managerAcknowledgedBy: actor.id, updatedAt: timestamp, updatedBy: actor.id };
+    this.storage.transaction(() => {
+      this.storage.updateFellowAssignment(id, patch);
+      this.storage.appendAudit(actor.id, "fellow_assignment_acknowledged", "fellow_assignment", id, { status: existing.status }, { status: "active", managerAcknowledgedAt: timestamp });
+    });
+    return this.storage.getFellowAssignment(id);
   }
 
   acceptHandoff(actor, projectId, input) {

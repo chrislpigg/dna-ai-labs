@@ -99,6 +99,8 @@ async function api(req, res, url) {
   if (req.method === "POST" && path === "/api/v1/cycles") return respond(res, 201, { cycle: await workflow.createCycle(requestActor, await body(req)) });
   if (req.method === "GET" && path === "/api/v1/feature-flags") return respond(res, 200, { flags: await workflow.listFeatureFlags(requestActor) });
   if (req.method === "GET" && path === "/api/v1/role-assignments") return respond(res, 200, { assignments: await workflow.listRoleAssignments(requestActor) });
+  if (req.method === "GET" && path === "/api/v1/fellow-assignments") return respond(res, 200, { assignments: await workflow.listFellowAssignments(requestActor, { cycleId: url.searchParams.get("cycleId"), projectId: url.searchParams.get("projectId") }) });
+  if (req.method === "POST" && path === "/api/v1/fellow-assignments") return respond(res, 201, { assignment: await workflow.createFellowAssignment(requestActor, await body(req)) });
   if (req.method === "GET" && path === "/api/v1/projects") return respond(res, 200, { projects: await workflow.listProjects() });
   if (req.method === "GET" && path === "/api/v1/audit-events") {
     requireRole(requestActor, [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.ADMIN]);
@@ -121,6 +123,10 @@ async function api(req, res, url) {
   if (req.method === "PATCH" && match) return respond(res, 200, { flag: await workflow.setFeatureFlag(requestActor, match[1], await body(req)) });
   match = path.match(/^\/api\/v1\/role-assignments\/([^/]+)$/);
   if (req.method === "PATCH" && match) return respond(res, 200, { assignment: await workflow.setRoleAssignment(requestActor, decodeURIComponent(match[1]), await body(req)) });
+  match = path.match(/^\/api\/v1\/fellow-assignments\/([^/]+)$/);
+  if (req.method === "PATCH" && match) return respond(res, 200, { assignment: await workflow.updateFellowAssignment(requestActor, match[1], await body(req)) });
+  match = path.match(/^\/api\/v1\/fellow-assignments\/([^/]+)\/manager-acknowledgement$/);
+  if (req.method === "POST" && match) return respond(res, 200, { assignment: await workflow.acknowledgeFellowAssignment(requestActor, match[1]) });
   match = path.match(/^\/api\/v1\/intakes\/([^/]+)\/triage-comments$/);
   if (req.method === "GET" && match) return respond(res, 200, { comments: await workflow.listTriageComments(requestActor, match[1]) });
   if (req.method === "POST" && match) return respond(res, 201, { comments: await workflow.addTriageComment(requestActor, match[1], await body(req)) });

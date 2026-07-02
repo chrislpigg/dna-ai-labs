@@ -282,4 +282,13 @@ Started: 2026-06-20
 - Files changed: `app.js`, `styles.css`, `test/intake-draft-ui.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: surface transfer readiness as explicit missing structured items, not as a hidden gate count; authorized UI should call the same audited item API used by backend workflows.
 
+## 2026-07-02 — US-033 Add Fellow assignment data model
+
+- Added Fellow assignment records scoped to cycle and project, with fellow id, role, capacity units, manager id, status, manager acknowledgement, and outcome metadata.
+- Added SQLite demo storage, tenant-scoped PostgreSQL migration/write paths, API endpoints for list/create/update/manager acknowledgement, and durable audit events for assignment creation, updates, and acknowledgement.
+- Enforced state guards so assignments cannot become active until the recorded manager acknowledges them, and only the recorded manager can perform that acknowledgement.
+- Verification: `npm test` (92 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `migrations/017_fellow_assignments.sql`, `server.mjs`, `src/fellow-assignments.mjs`, `src/labs-store.mjs`, `src/postgres-workflow-adapter.mjs`, `src/storage-port.mjs`, `src/workflow-service.mjs`, `package.json`, `test/migration-runner.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: keep Fellow capacity as governed assignment metadata and make manager acknowledgement the only path into active assignment state.
+
 ---

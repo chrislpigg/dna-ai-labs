@@ -20,7 +20,7 @@ class FakePostgresClient {
 
 test("repository migrations are ordered and include the current core schema", () => {
   const migrations = loadSqlMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items"]);
+  assert.deepEqual(migrations.map(migration => migration.version), ["001_core_schema", "002_audit_events_append_only", "003_organization_tenant_scope", "004_soft_delete_lifecycle", "005_retention_policy_metadata", "006_audit_integrity_chain", "007_intake_draft_persistence", "008_intake_draft_collaborators", "009_intake_submit_withdraw", "010_triage_comments_requests", "011_intake_revision_history", "012_cycle_administration", "013_project_capacity_units", "014_feature_flags", "015_role_assignments", "016_delivery_kit_items", "017_fellow_assignments"]);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS projects/);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(migrations[1].sql, /append-only/);
@@ -45,6 +45,17 @@ test("delivery-kit migration stores tenant-scoped required readiness items", () 
   assert.match(migration.sql, /delivery_kit_items_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
   assert.match(migration.sql, /delivery_kit_items_owner_organization_fk FOREIGN KEY \(owner_id, organization_id\) REFERENCES users\(id, organization_id\)/);
   assert.match(migration.sql, /delivery_kit_items_project_idx ON delivery_kit_items \(organization_id, project_id, item_key\)/);
+});
+
+test("Fellow assignment migration stores manager-acknowledged cycle assignments", () => {
+  const migration = loadSqlMigrations().find(entry => entry.version === "017_fellow_assignments");
+  assert.ok(migration);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS fellow_assignments/);
+  assert.match(migration.sql, /status IN \('proposed', 'active', 'completed', 'cancelled'\)/);
+  assert.match(migration.sql, /fellow_assignments_active_manager_ack CHECK \(status <> 'active' OR manager_acknowledged_at IS NOT NULL\)/);
+  assert.match(migration.sql, /fellow_assignments_cycle_organization_fk FOREIGN KEY \(cycle_id, organization_id\) REFERENCES cycles\(id, organization_id\)/);
+  assert.match(migration.sql, /fellow_assignments_project_organization_fk FOREIGN KEY \(project_id, organization_id\) REFERENCES projects\(id, organization_id\) ON DELETE CASCADE/);
+  assert.match(migration.sql, /fellow_assignments_fellow_status_idx ON fellow_assignments \(organization_id, fellow_id, status\)/);
 });
 
 test("feature flag migration stores tenant-scoped pilot controls", () => {

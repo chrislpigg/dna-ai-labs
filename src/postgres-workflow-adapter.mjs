@@ -8,6 +8,7 @@ import { featureFlagDefaults, knownFeatureFlag } from "./feature-flags.mjs";
 import { DisabledDirectoryAdapter, requireActiveDirectoryPerson } from "./directory-adapter.mjs";
 import { enrichProjectDirectoryContext } from "./directory-context.mjs";
 import { defaultDeliveryKitItems, normalizeDeliveryKitInput, normalizeDeliveryKitItemKey } from "./delivery-kit.mjs";
+import { normalizeFellowAssignmentInput } from "./fellow-assignments.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -349,6 +350,50 @@ class PostgresTransaction {
 
   async deleteDeliveryKitItem(projectId, itemKey) {
     await this.query("DELETE FROM delivery_kit_items WHERE organization_id = $1 AND project_id = $2 AND item_key = $3", [this.organizationId, projectId, itemKey]);
+  }
+
+  async listFellowAssignments(filters = {}) {
+    const clauses = [];
+    const params = [this.organizationId];
+    if (filters.cycleId) { params.push(filters.cycleId); clauses.push(`cycle_id = $${params.length}`); }
+    if (filters.projectId) { params.push(filters.projectId); clauses.push(`project_id = $${params.length}`); }
+    const where = clauses.length ? ` AND ${clauses.join(" AND ")}` : "";
+    const result = await this.query(`SELECT id, cycle_id AS "cycleId", project_id AS "projectId", fellow_id AS "fellowId",
+      assignment_role AS "assignmentRole", capacity_units AS "capacityUnits", status, manager_id AS "managerId",
+      manager_acknowledged_at AS "managerAcknowledgedAt", manager_acknowledged_by AS "managerAcknowledgedBy",
+      outcome, created_at AS "createdAt", created_by AS "createdBy", updated_at AS "updatedAt", updated_by AS "updatedBy"
+      FROM fellow_assignments WHERE organization_id = $1${where} ORDER BY updated_at DESC, id`, params);
+    return result.rows || [];
+  }
+
+  async getFellowAssignment(id) {
+    const result = await this.query(`SELECT id, cycle_id AS "cycleId", project_id AS "projectId", fellow_id AS "fellowId",
+      assignment_role AS "assignmentRole", capacity_units AS "capacityUnits", status, manager_id AS "managerId",
+      manager_acknowledged_at AS "managerAcknowledgedAt", manager_acknowledged_by AS "managerAcknowledgedBy",
+      outcome, created_at AS "createdAt", created_by AS "createdBy", updated_at AS "updatedAt", updated_by AS "updatedBy"
+      FROM fellow_assignments WHERE organization_id = $1 AND id = $2`, [this.organizationId, id]);
+    const row = result.rows?.[0];
+    if (!row) throw new WorkflowError("NOT_FOUND", "Fellow assignment not found.", 404);
+    return row;
+  }
+
+  async insertFellowAssignment(assignment) {
+    await this.query(`INSERT INTO fellow_assignments (id, organization_id, cycle_id, project_id, fellow_id, assignment_role, capacity_units,
+      status, manager_id, manager_acknowledged_at, manager_acknowledged_by, outcome, created_at, created_by, updated_at, updated_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`, [
+      assignment.id, this.organizationId, assignment.cycleId, assignment.projectId, assignment.fellowId, assignment.assignmentRole,
+      assignment.capacityUnits, assignment.status, assignment.managerId, assignment.managerAcknowledgedAt, assignment.managerAcknowledgedBy,
+      assignment.outcome, assignment.createdAt, assignment.createdBy, assignment.updatedAt, assignment.updatedBy
+    ]);
+  }
+
+  async updateFellowAssignment(id, patch) {
+    await this.query(`UPDATE fellow_assignments SET assignment_role = $3, capacity_units = $4, status = $5, manager_id = $6,
+      manager_acknowledged_at = $7, manager_acknowledged_by = $8, outcome = $9, updated_at = $10, updated_by = $11
+      WHERE organization_id = $1 AND id = $2`, [
+      this.organizationId, id, patch.assignmentRole, patch.capacityUnits, patch.status, patch.managerId,
+      patch.managerAcknowledgedAt, patch.managerAcknowledgedBy, patch.outcome, patch.updatedAt, patch.updatedBy
+    ]);
   }
 
   async getHandoff(projectId) {
@@ -950,6 +995,65 @@ export class PostgresWorkflowAdapter {
       await tx.appendAudit(actor.id, "delivery_kit_item_deleted", "delivery_kit_item", `${projectId}:${key}`, before, null);
     });
     return (await this.project(projectId)).deliveryKit.find(existing => existing.itemKey === key);
+  }
+
+  async listFellowAssignments(actor, filters = {}) {
+    requireRole(actor, Object.values(roles));
+    return this.transaction(tx => tx.listFellowAssignments({
+      cycleId: String(filters.cycleId ?? "").trim() || null,
+      projectId: String(filters.projectId ?? "").trim() || null
+    }));
+  }
+
+  async createFellowAssignment(actor, input = {}) {
+    requireRole(actor, [roles.LAB_LEAD, roles.ADMIN]);
+    const fellow = await requireActiveDirectoryPerson(this.directory, input.fellowId, "Fellow");
+    const data = normalizeFellowAssignmentInput({ ...input, managerId: input.managerId || fellow.managerId });
+    const project = await this.project(data.projectId);
+    await this.reads.getCycle(data.cycleId);
+    if (project.cycleId !== data.cycleId) throw new WorkflowError("FELLOW_ASSIGNMENT_SCOPE_MISMATCH", "Fellow assignment cycle must match the project cycle.", 422);
+    await this.actor(data.fellowId); await this.actor(data.managerId);
+    if (data.status === "active") throw new WorkflowError("MANAGER_ACK_REQUIRED", "Manager acknowledgement is required before a Fellow assignment can become active.", 409);
+    const id = randomUUID(); const timestamp = now();
+    const assignment = { id, ...data, status: data.status, managerAcknowledgedAt: null, managerAcknowledgedBy: null, createdAt: timestamp, createdBy: actor.id, updatedAt: timestamp, updatedBy: actor.id };
+    await this.transaction(async tx => {
+      await tx.insertFellowAssignment(assignment);
+      await tx.appendAudit(actor.id, "fellow_assignment_created", "fellow_assignment", id, null, { cycleId: data.cycleId, projectId: data.projectId, fellowId: data.fellowId, status: assignment.status });
+    });
+    return this.transaction(tx => tx.getFellowAssignment(id));
+  }
+
+  async updateFellowAssignment(actor, id, input = {}) {
+    requireRole(actor, [roles.LAB_LEAD, roles.ADMIN]);
+    const existing = await this.transaction(tx => tx.getFellowAssignment(id));
+    const data = normalizeFellowAssignmentInput(input, existing);
+    const project = await this.project(data.projectId);
+    await this.reads.getCycle(data.cycleId);
+    if (project.cycleId !== data.cycleId) throw new WorkflowError("FELLOW_ASSIGNMENT_SCOPE_MISMATCH", "Fellow assignment cycle must match the project cycle.", 422);
+    await this.actor(data.fellowId); await this.actor(data.managerId);
+    const managerAcknowledgedAt = existing.managerAcknowledgedAt && existing.managerId === data.managerId ? existing.managerAcknowledgedAt : null;
+    const managerAcknowledgedBy = existing.managerAcknowledgedAt && existing.managerId === data.managerId ? existing.managerAcknowledgedBy : null;
+    if (data.status === "active" && !managerAcknowledgedAt) throw new WorkflowError("MANAGER_ACK_REQUIRED", "Manager acknowledgement is required before a Fellow assignment can become active.", 409);
+    const timestamp = now();
+    const patch = { ...data, managerAcknowledgedAt, managerAcknowledgedBy, updatedAt: timestamp, updatedBy: actor.id };
+    await this.transaction(async tx => {
+      await tx.updateFellowAssignment(id, patch);
+      await tx.appendAudit(actor.id, "fellow_assignment_updated", "fellow_assignment", id, { status: existing.status, managerId: existing.managerId }, { status: patch.status, managerId: patch.managerId });
+    });
+    return this.transaction(tx => tx.getFellowAssignment(id));
+  }
+
+  async acknowledgeFellowAssignment(actor, id) {
+    const existing = await this.transaction(tx => tx.getFellowAssignment(id));
+    if (existing.managerId !== actor.id) throw new WorkflowError("FORBIDDEN", "Only the assigned Fellow manager can acknowledge this assignment.", 403);
+    if (existing.status !== "proposed") throw new WorkflowError("INVALID_FELLOW_ASSIGNMENT_STATE", "Only proposed Fellow assignments can be acknowledged.", 409);
+    const timestamp = now();
+    const patch = { ...existing, status: "active", managerAcknowledgedAt: timestamp, managerAcknowledgedBy: actor.id, updatedAt: timestamp, updatedBy: actor.id };
+    await this.transaction(async tx => {
+      await tx.updateFellowAssignment(id, patch);
+      await tx.appendAudit(actor.id, "fellow_assignment_acknowledged", "fellow_assignment", id, { status: existing.status }, { status: "active", managerAcknowledgedAt: timestamp });
+    });
+    return this.transaction(tx => tx.getFellowAssignment(id));
   }
 
   async acceptHandoff(actor, projectId, input) {
