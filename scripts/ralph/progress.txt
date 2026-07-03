@@ -437,3 +437,12 @@ Started: 2026-06-20
 - Verification: `npm test` (153 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `server.mjs`, `src/audit-export.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `package.json`, `test/audit-export.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/server-audit-export.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: audit export should be treated as its own governed workflow action; bounds and tenant filters belong before export materialization, and CSV formula protection needs to apply to every cell, not only user-facing labels.
+
+## 2026-07-02 — US-050 Add API security regression suite
+
+- Added a dedicated API security regression suite covering draft IDOR, role escalation, draft mass assignment, injection-shaped directory and subject input, unauthorized audit export, CSRF failures, rate limiting, and tenant-scoped PostgreSQL boundaries.
+- Asserted security failures return only structured, non-sensitive error responses without echoing draft content, payload titles, export metadata, tokens, or injected input.
+- Added the new suite to the explicit `npm run check` syntax gate.
+- Verification: `npm test` (157 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `package.json`, `test/api-security-regression.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: security regressions are most useful when they assert both denial and non-disclosure; a correct 403 or 429 is incomplete if the response body echoes the protected object, token, or attack string.
