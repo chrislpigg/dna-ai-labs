@@ -446,3 +446,12 @@ Started: 2026-06-20
 - Verification: `npm test` (157 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `package.json`, `test/api-security-regression.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: security regressions are most useful when they assert both denial and non-disclosure; a correct 403 or 429 is incomplete if the response body echoes the protected object, token, or attack string.
+
+## 2026-07-02 — US-051 Add end-to-end governed workflow tests
+
+- Added a governed workflow e2e suite using local SQLite demo storage as the documented substitute for production-like lifecycle coverage when external production configuration is unavailable.
+- Covered draft creation, draft submission, receiving-owner acknowledgement, selection, incubation, transfer decision request, independent approvals, handoff acceptance, delivery-kit completion, final transfer, reminder-backed 30-day follow-up, rejection, and revised decision request.
+- Added the new e2e suite to the explicit `npm run check` syntax gate.
+- Verification: `npm test` (159 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `package.json`, `test/governed-workflow-e2e.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: end-to-end workflow tests should validate the durable audit and notification side effects as part of the lifecycle, not just the final project stage.
