@@ -25,8 +25,11 @@ Never place raw member, DNA, health, family-history, employee, access-token, or 
 | `LABS_CALENDAR_PROVIDER` | Approved calendar-provider selection. | Provider label only. |
 | `LABS_ANALYTICS_PROVIDER` | Approved analytics-provider selection. | Provider label only. |
 | `LABS_RATE_LIMIT_STORE` | Durable write-rate-limit store selection; production currently accepts `postgres`. | Store label only; counters stay tenant and actor scoped. |
+| `LABS_OBSERVABILITY_EXPORTER` | Approved telemetry exporter selection; currently accepts `stdout` or `otlp`. | Exporter label only; telemetry records are sanitized before export. |
 
 Provider-specific endpoints, credentials, CA material, signing keys, and client secrets must be supplied through the approved deployment secret mechanism once each adapter is implemented. Do not commit or print their values. The provider selection variables are configuration contracts; no vendor endpoint is inferred by the service. Production write requests also require `LABS_RATE_LIMIT_STORE=postgres`; absent or non-durable limiter configuration keeps the runtime fail-closed.
+
+Structured request, workflow, security, and integration telemetry uses `x-correlation-id` when it is a safe identifier and otherwise generates a server ID. Telemetry records include metadata such as method, route, status code, actor id, role, tenant id, integration type, operation, outcome, and stable error codes. They explicitly redact tokens, cookies, raw request bodies, project narrative content, comments, rationale, URLs, approved links, and provider payloads. Configure the approved trace/log exporter through `LABS_OBSERVABILITY_EXPORTER`; if `otlp` is selected, provide exporter endpoint credentials only through the deployment secret mechanism, not through this repository. Application counters are available to administrators at `GET /api/v1/observability/metrics`.
 
 `LABS_GROUP_ROLE_MAPPING` has this shape; replace these examples with the approved groups, never with user-controlled claims:
 

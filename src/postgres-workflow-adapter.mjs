@@ -14,6 +14,7 @@ import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
 import { buildPortfolioMetrics } from "./portfolio-metrics.mjs";
+import { currentObservabilityContext } from "./observability.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -713,7 +714,7 @@ class PostgresTransaction {
 
 /** Authoritative PostgreSQL workflow adapter. Every mutation includes its audit event in one transaction. */
 export class PostgresWorkflowAdapter {
-  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter(), analyticsAdapter = new DisabledAnalyticsAdapter() } = {}) {
+  constructor({ queryable, organizationId, approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter(), analyticsAdapter = new DisabledAnalyticsAdapter(), observability = null } = {}) {
     if (!queryable || typeof queryable.query !== "function" || typeof queryable.connect !== "function") throw new TypeError("A PostgreSQL pool with connect() is required.");
     this.queryable = queryable;
     this.organizationId = requiredText(organizationId, "organizationId");
@@ -724,6 +725,7 @@ export class PostgresWorkflowAdapter {
     this.workTracking = workTrackingAdapter;
     this.calendar = calendarAdapter;
     this.analytics = analyticsAdapter;
+    this.observability = observability;
   }
 
   async transaction(work) {
@@ -811,6 +813,16 @@ export class PostgresWorkflowAdapter {
   }
 
   async recordIntegrationAttempt(integrationType, operation, context = {}, outcome, errorCode = null) {
+    this.observability?.integration({
+      ...currentObservabilityContext(),
+      integrationType,
+      operation,
+      outcome,
+      errorCode,
+      actorId: context.actorId || null,
+      projectId: context.projectId || null,
+      entityType: context.entityType || null
+    });
     try {
       await this.transaction(tx => tx.appendIntegrationAttempt({
         id: randomUUID(),
@@ -1682,6 +1694,6 @@ export class PostgresWorkflowAdapter {
   }
 }
 
-export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, analyticsAdapter, PoolConstructor = Pool } = {}) {
-  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, analyticsAdapter });
+export function createPostgresWorkflowAdapter({ databaseUrl, organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, analyticsAdapter, observability, PoolConstructor = Pool } = {}) {
+  return new PostgresWorkflowAdapter({ queryable: new PoolConstructor({ connectionString: requiredText(databaseUrl, "databaseUrl") }), organizationId, approvedArtifactOrigins, directoryAdapter, artifactVerifier, workTrackingAdapter, calendarAdapter, analyticsAdapter, observability });
 }

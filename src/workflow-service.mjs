@@ -11,6 +11,7 @@ import { DisabledWorkTrackingAdapter } from "./work-tracking-adapter.mjs";
 import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
 import { buildPortfolioMetrics } from "./portfolio-metrics.mjs";
+import { currentObservabilityContext } from "./observability.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -174,7 +175,7 @@ function normalizeCalendarEventInput(input = {}, project) {
 
 /** Server-owned governed workflow. It is intentionally independent of SQLite. */
 export class WorkflowService {
-  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter(), analyticsAdapter = new DisabledAnalyticsAdapter() } = {}) {
+  constructor(storage, { approvedArtifactOrigins = ["https://intranet.example"], directoryAdapter = new DisabledDirectoryAdapter(), artifactVerifier, workTrackingAdapter = new DisabledWorkTrackingAdapter(), calendarAdapter = new DisabledCalendarAdapter(), analyticsAdapter = new DisabledAnalyticsAdapter(), observability = null } = {}) {
     this.storage = assertStoragePort(storage);
     this.approvedArtifactOrigins = new Set(approvedArtifactOrigins);
     this.directory = directoryAdapter;
@@ -182,6 +183,7 @@ export class WorkflowService {
     this.workTracking = workTrackingAdapter;
     this.calendar = calendarAdapter;
     this.analytics = analyticsAdapter;
+    this.observability = observability;
   }
 
   actor(id) { return this.storage.getActor(id); }
@@ -238,6 +240,16 @@ export class WorkflowService {
   }
 
   recordIntegrationAttempt(integrationType, operation, context = {}, outcome, errorCode = null) {
+    this.observability?.integration({
+      ...currentObservabilityContext(),
+      integrationType,
+      operation,
+      outcome,
+      errorCode,
+      actorId: context.actorId || null,
+      projectId: context.projectId || null,
+      entityType: context.entityType || null
+    });
     try {
       this.storage.appendIntegrationAttempt({
         id: randomUUID(),

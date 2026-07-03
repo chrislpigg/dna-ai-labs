@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { requireRole, roles, WorkflowError } from "./src/workflow-policy.mjs";
 import { runtimeReadiness, validateRuntimeConfiguration } from "./src/runtime-config.mjs";
 import { requireCsrfProtection, responseSecurityHeaders } from "./src/request-security.mjs";
 import { createWriteRateLimiter } from "./src/rate-limiter.mjs";
+import { correlationIdFromHeaders, createObservability } from "./src/observability.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const isVercel = Boolean(process.env.VERCEL);
@@ -18,9 +20,10 @@ const runtimeConfiguration = validateRuntimeConfiguration(process.env);
 const demoMode = runtimeConfiguration.demoMode;
 const groupRoleMapping = demoMode ? demoGroupRoleMapping() : parseGroupRoleMapping(process.env.LABS_GROUP_ROLE_MAPPING);
 const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
-const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins }) : null;
+const observability = createObservability({ env: process.env, demoMode });
+const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins, observability }) : null;
 const postgresWorkflow = !demoMode && runtimeConfiguration.valid
-  ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins })
+  ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins, observability })
   : null;
 const workflow = store || postgresWorkflow;
 const writeRateLimiter = createWriteRateLimiter({ env: process.env, demoMode, databaseUrl: process.env.LABS_DATABASE_URL });
@@ -42,7 +45,8 @@ const identityProvider = createIdentityProvider({
 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
 function respond(res, status, body, headers = {}) {
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...responseSecurityHeaders, ...headers });
+  res._labsStatusCode = status;
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-correlation-id": res._labsCorrelationId || randomUUID(), ...responseSecurityHeaders, ...headers });
   res.end(JSON.stringify(body));
 }
 
@@ -90,6 +94,7 @@ async function actor(req) {
 
 async function api(req, res, url) {
   const requestActor = await actor(req);
+  req._labsActor = requestActor;
   requireCsrfProtection(req, {
     authenticationMode: identityProvider.authenticationMode,
     applicationOrigin: process.env.LABS_APPLICATION_ORIGIN
@@ -103,6 +108,10 @@ async function api(req, res, url) {
   if (req.method === "GET" && path === "/api/v1/feature-flags") return respond(res, 200, { flags: await workflow.listFeatureFlags(requestActor) });
   if (req.method === "GET" && path === "/api/v1/role-assignments") return respond(res, 200, { assignments: await workflow.listRoleAssignments(requestActor) });
   if (req.method === "GET" && path === "/api/v1/integrations/health") return respond(res, 200, await workflow.integrationHealth(requestActor));
+  if (req.method === "GET" && path === "/api/v1/observability/metrics") {
+    requireRole(requestActor, [roles.ADMIN]);
+    return respond(res, 200, { metrics: observability.snapshot() });
+  }
   if (req.method === "GET" && path === "/api/v1/notifications/outbox") return respond(res, 200, { notifications: await workflow.notificationOutbox(requestActor, Number(url.searchParams.get("limit")) || 100) });
   if (req.method === "GET" && path === "/api/v1/fellow-assignments") return respond(res, 200, { assignments: await workflow.listFellowAssignments(requestActor, { cycleId: url.searchParams.get("cycleId"), projectId: url.searchParams.get("projectId") }) });
   if (req.method === "POST" && path === "/api/v1/fellow-assignments") return respond(res, 201, { assignment: await workflow.createFellowAssignment(requestActor, await body(req)) });
@@ -201,32 +210,64 @@ async function staticFile(req, res, url) {
   if (relativePath.startsWith("..") || relativePath === "" || relativePath === "data" || relativePath.startsWith(`data${sep}`)) return respond(res, 403, { error: { code: "FORBIDDEN", message: "Not available." } });
   try {
     const file = await readFile(resolved);
-    res.writeHead(200, { "content-type": contentTypes[extname(resolved)] || "application/octet-stream", ...responseSecurityHeaders });
+    res._labsStatusCode = 200;
+    res.writeHead(200, { "content-type": contentTypes[extname(resolved)] || "application/octet-stream", "x-correlation-id": res._labsCorrelationId || randomUUID(), ...responseSecurityHeaders });
     res.end(file);
   } catch { respond(res, 404, { error: { code: "NOT_FOUND", message: "Page not found." } }); }
 }
 
 export async function handler(req, res) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    if (req.method === "GET" && url.pathname === "/healthz") {
-      const database = databaseReadiness ? await databaseReadiness.check() : null;
-      const healthy = workflow ? await workflow.health() && (!database || database.ready) : false;
-      return respond(res, healthy ? 200 : 503, { status: healthy ? "ok" : "error" });
+  const startedAt = Date.now();
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const correlationId = correlationIdFromHeaders(req.headers);
+  res._labsCorrelationId = correlationId;
+  let errorCode = null;
+  return observability.withContext({ correlationId }, async () => {
+    try {
+      if (req.method === "GET" && url.pathname === "/healthz") {
+        const database = databaseReadiness ? await databaseReadiness.check() : null;
+        const healthy = workflow ? await workflow.health() && (!database || database.ready) : false;
+        return respond(res, healthy ? 200 : 503, { status: healthy ? "ok" : "error" });
+      }
+      if (req.method === "GET" && url.pathname === "/readyz") {
+        const status = await readiness();
+        return respond(res, status.ready ? 200 : 503, status);
+      }
+      if (url.pathname.startsWith("/api/")) await api(req, res, url); else await staticFile(req, res, url);
+    } catch (error) {
+      if (error instanceof WorkflowError) {
+        errorCode = error.code;
+        const headers = error.code === "RATE_LIMITED" && error.details?.retryAfterSeconds ? { "retry-after": String(error.details.retryAfterSeconds) } : {};
+        respond(res, error.status, { error: { code: error.code, message: error.message, details: error.details } }, headers);
+      } else {
+        errorCode = "INTERNAL_ERROR";
+        observability.emit("error", { code: "INTERNAL_ERROR", message: "Unexpected request failure." });
+        respond(res, 500, { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred." } });
+      }
+    } finally {
+      const actorMeta = req._labsActor;
+      const route = url.pathname;
+      const statusCode = res._labsStatusCode || 500;
+      const base = {
+        correlationId,
+        method: req.method,
+        route,
+        statusCode,
+        durationMs: Date.now() - startedAt,
+        actorId: actorMeta?.id || null,
+        role: actorMeta?.role || null,
+        organizationId: actorMeta?.identity?.organization || process.env.LABS_TENANT_ID || (demoMode ? "demo-tenant" : null),
+        errorCode
+      };
+      observability.request(base);
+      if (url.pathname.startsWith("/api/") && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && statusCode < 400) {
+        observability.workflow({ ...base, result: "success" });
+      }
+      if ([401, 403, 429].includes(statusCode) || ["CSRF", "RATE_LIMIT", "TENANT", "UNAUTHENTICATED", "UNVERIFIED"].some(prefix => String(errorCode || "").startsWith(prefix))) {
+        observability.security({ ...base, code: errorCode || `HTTP_${statusCode}` });
+      }
     }
-    if (req.method === "GET" && url.pathname === "/readyz") {
-      const status = await readiness();
-      return respond(res, status.ready ? 200 : 503, status);
-    }
-    if (url.pathname.startsWith("/api/")) await api(req, res, url); else await staticFile(req, res, url);
-  } catch (error) {
-    if (error instanceof WorkflowError) {
-      const headers = error.code === "RATE_LIMITED" && error.details?.retryAfterSeconds ? { "retry-after": String(error.details.retryAfterSeconds) } : {};
-      return respond(res, error.status, { error: { code: error.code, message: error.message, details: error.details } }, headers);
-    }
-    console.error(error);
-    respond(res, 500, { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred." } });
-  }
+  });
 }
 
 export default handler;

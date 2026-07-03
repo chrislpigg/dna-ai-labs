@@ -419,3 +419,12 @@ Started: 2026-06-20
 - Verification: `npm test` (143 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `migrations/026_rate_limit_counters.sql`, `server.mjs`, `src/rate-limiter.mjs`, `src/runtime-config.mjs`, `docs/runtime-configuration.md`, `package.json`, `test/rate-limiter.test.mjs`, `test/server-rate-limit.test.mjs`, `test/migration-runner.test.mjs`, `test/runtime-config.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: rate limits should key on tenant, actor, and normalized route together; per-record URLs are too easy to bypass, and production should not silently fall back to process memory for abuse controls.
+
+## 2026-07-02 — US-048 Add structured observability
+
+- Added a structured observability boundary with correlation IDs, sanitized request/workflow/security/integration events, and in-process application counters.
+- Wired API responses to return `x-correlation-id`, emitted workflow events for successful write requests, emitted security events for authentication/authorization/rate-limit failures, and connected integration-attempt telemetry to artifact/work/calendar flows.
+- Added an administrator-only `/api/v1/observability/metrics` endpoint and documented `LABS_OBSERVABILITY_EXPORTER` configuration, accepted exporter labels, redaction rules, and metrics access.
+- Verification: `npm test` (148 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `server.mjs`, `src/observability.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `src/runtime-config.mjs`, `docs/runtime-configuration.md`, `package.json`, `test/observability.test.mjs`, `test/server-observability.test.mjs`, `test/server-rate-limit.test.mjs`, `test/runtime-config.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: telemetry should be generated from controlled metadata at the boundary; redaction needs to happen before export, not after logs have already accepted raw request bodies or provider data.

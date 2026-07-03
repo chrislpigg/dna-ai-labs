@@ -35,6 +35,7 @@ test("write endpoints return structured 429 responses with retry guidance", asyn
   process.env.LABS_DB_PATH = join(directory, "labs.sqlite");
   process.env.LABS_WRITE_RATE_LIMIT_MAX = "1";
   process.env.LABS_WRITE_RATE_LIMIT_WINDOW_SECONDS = "60";
+  process.env.LABS_OBSERVABILITY_EXPORTER = "otlp";
   const { handler } = await import(`../server.mjs?rate-limit-test=${Date.now()}`);
 
   const payload = { content: { title: "Rate limited draft" } };

@@ -28,7 +28,8 @@ const productionEnvironment = {
   LABS_WORK_TRACKING_PROVIDER: "approved-provider",
   LABS_CALENDAR_PROVIDER: "approved-provider",
   LABS_ANALYTICS_PROVIDER: "approved-provider",
-  LABS_RATE_LIMIT_STORE: "postgres"
+  LABS_RATE_LIMIT_STORE: "postgres",
+  LABS_OBSERVABILITY_EXPORTER: "stdout"
 };
 
 test("production configuration reports missing contracts without exposing values", () => {
@@ -43,6 +44,7 @@ test("production configuration reports missing contracts without exposing values
   assert.ok(result.issues.includes("missing_tenant_id"));
   assert.ok(result.issues.includes("missing_group_role_mapping"));
   assert.ok(result.issues.includes("missing_rate_limit_store"));
+  assert.ok(result.issues.includes("missing_observability_exporter"));
   assert.equal(JSON.stringify(result).includes("secret"), false);
   assert.equal(JSON.stringify(result).includes("identity.example"), false);
 });
@@ -83,6 +85,12 @@ test("production configuration requires the approved durable rate-limit store", 
   const result = validateRuntimeConfiguration({ ...productionEnvironment, LABS_RATE_LIMIT_STORE: "memory" });
   assert.equal(result.valid, false);
   assert.ok(result.issues.includes("invalid_rate_limit_store"));
+});
+
+test("production configuration requires an approved observability exporter", () => {
+  const result = validateRuntimeConfiguration({ ...productionEnvironment, LABS_OBSERVABILITY_EXPORTER: "debug-console" });
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.includes("invalid_observability_exporter"));
 });
 
 test("demo mode is explicit and remains non-ready", () => {
