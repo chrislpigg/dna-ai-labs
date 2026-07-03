@@ -933,6 +933,24 @@ test("audit events are restricted to governance roles", () => {
   } finally { dispose(); }
 });
 
+test("audit export is admin-only, bounded, formula-safe, and audited", () => {
+  const { store, dispose } = createStore();
+  try {
+    const admin = store.actor("admin");
+    store.storage.appendAudit(admin.id, "=HYPERLINK(\"https://example.invalid\",\"open\")", "project", "+A1", null, { exported: true });
+    expectWorkflowError(() => store.exportAuditEvents(store.actor("lab-lead"), { from: "2020-01-01", to: "2099-12-31" }), "FORBIDDEN");
+    expectWorkflowError(() => store.exportAuditEvents(admin, { from: "2099-12-31", to: "2020-01-01" }), "INVALID_AUDIT_EXPORT_BOUNDS");
+
+    const exported = store.exportAuditEvents(admin, { from: "2020-01-01", to: "2099-12-31", limit: 10 });
+    assert.equal(exported.metadata.format, "csv");
+    assert.ok(exported.metadata.count > 0);
+    assert.match(exported.csv, /export_id,generated_at,from,to,event_id,event_created_at,actor_id,action,entity_type,entity_id,before_summary,after_summary/);
+    assert.match(exported.csv, /"'=HYPERLINK\(""https:\/\/example\.invalid"",""open""\)"/);
+    assert.match(exported.csv, /,'\+A1,/);
+    assert.equal(store.auditEvents(admin, 20).some(event => event.action === "audit_export_requested" && event.entityId === exported.metadata.exportId && event.after.count === exported.metadata.count), true);
+  } finally { dispose(); }
+});
+
 test("confidential work requires security and privacy reviews before its review gate completes", () => {
   const { store, dispose } = createStore();
   try {

@@ -106,3 +106,21 @@ test("a failed audit write rolls back the workflow write and does not commit par
   assert.equal(client.calls.at(-1).sql, "ROLLBACK");
   assert.equal(client.released, true);
 });
+
+test("PostgreSQL audit export uses tenant and date bounds and audits the request", async () => {
+  const client = new TransactionClientMock();
+  const pool = new PoolMock(client);
+  const adapter = new PostgresWorkflowAdapter({ queryable: pool, organizationId: "org-a" });
+
+  await assert.rejects(
+    () => adapter.exportAuditEvents({ id: "lab-lead", role: "lab-lead" }, { from: "2026-07-01", to: "2026-07-02" }),
+    error => error instanceof WorkflowError && error.code === "FORBIDDEN"
+  );
+
+  const exported = await adapter.exportAuditEvents({ id: "admin", role: "admin" }, { from: "2026-07-01", to: "2026-07-02", limit: 25 });
+  assert.equal(exported.metadata.organizationId, "org-a");
+  assert.equal(exported.metadata.limit, 25);
+  const exportRead = pool.readCalls.find(call => call.sql.includes("FROM audit_events") && call.sql.includes("created_at >= $2"));
+  assert.deepEqual(exportRead.params, ["org-a", "2026-07-01T00:00:00.000Z", "2026-07-02T23:59:59.999Z", 25]);
+  assert.equal(client.calls.some(call => call.sql.includes("INSERT INTO audit_events") && call.params.includes("audit_export_requested")), true);
+});

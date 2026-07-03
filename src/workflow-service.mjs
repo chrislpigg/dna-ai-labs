@@ -12,6 +12,7 @@ import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
 import { buildPortfolioMetrics } from "./portfolio-metrics.mjs";
 import { currentObservabilityContext } from "./observability.mjs";
+import { auditEventWithinBounds, buildAuditExport, normalizeAuditExportInput } from "./audit-export.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -1152,5 +1153,20 @@ export class WorkflowService {
   auditEvents(actor, limit = 100) {
     requireRole(actor, [roles.LAB_LEAD, roles.EXECUTIVE_SPONSOR, roles.ADMIN]);
     return this.storage.listAuditEvents(limit);
+  }
+
+  exportAuditEvents(actor, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const bounds = normalizeAuditExportInput(input);
+    const exportId = randomUUID();
+    const generatedAt = now();
+    const events = this.storage.listAuditEvents(Number.MAX_SAFE_INTEGER)
+      .filter(event => auditEventWithinBounds(event, bounds))
+      .slice(0, bounds.limit);
+    const exportPayload = buildAuditExport(events, { bounds, generatedAt, exportId, organizationId: actor.identity?.organization || null });
+    this.storage.transaction(() => {
+      this.storage.appendAudit(actor.id, "audit_export_requested", "audit_export", exportId, null, exportPayload.metadata);
+    });
+    return exportPayload;
   }
 }

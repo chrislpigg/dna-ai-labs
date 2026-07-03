@@ -15,6 +15,7 @@ import { DisabledCalendarAdapter } from "./calendar-adapter.mjs";
 import { DisabledAnalyticsAdapter, normalizeMetricPlanInput } from "./analytics-adapter.mjs";
 import { buildPortfolioMetrics } from "./portfolio-metrics.mjs";
 import { currentObservabilityContext } from "./observability.mjs";
+import { buildAuditExport, normalizeAuditExportInput } from "./audit-export.mjs";
 import {
   WorkflowError,
   finalStage,
@@ -784,6 +785,18 @@ export class PostgresWorkflowAdapter {
     return verifyAuditChain(result.rows || []);
   }
   listAuditEvents(limit) { return this.reads.listAuditEvents(limit); }
+  async exportAuditEvents(actor, input = {}) {
+    requireRole(actor, [roles.ADMIN]);
+    const bounds = normalizeAuditExportInput(input);
+    const exportId = randomUUID();
+    const generatedAt = now();
+    const events = await this.reads.listAuditEventsForExport(bounds);
+    const exportPayload = buildAuditExport(events, { bounds, generatedAt, exportId, organizationId: this.organizationId });
+    await this.transaction(async tx => {
+      await tx.appendAudit(actor.id, "audit_export_requested", "audit_export", exportId, null, exportPayload.metadata);
+    });
+    return exportPayload;
+  }
   health() { return this.reads.health(); }
   close() { return this.reads.close(); }
 

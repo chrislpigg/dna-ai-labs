@@ -122,6 +122,9 @@ async function api(req, res, url) {
     const limit = Number(url.searchParams.get("limit")) || 100;
     return respond(res, 200, { events: store ? store.auditEvents(requestActor, limit) : await workflow.listAuditEvents(limit) });
   }
+  if (req.method === "GET" && path === "/api/v1/audit-events/export") {
+    return respond(res, 200, { export: await workflow.exportAuditEvents(requestActor, Object.fromEntries(url.searchParams)) });
+  }
   if (req.method === "GET" && path === "/api/v1/audit-events/verify") {
     requireRole(requestActor, [roles.ADMIN]);
     return respond(res, 200, { integrity: await workflow.verifyAuditIntegrity() });

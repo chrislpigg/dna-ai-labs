@@ -428,3 +428,12 @@ Started: 2026-06-20
 - Verification: `npm test` (148 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `server.mjs`, `src/observability.mjs`, `src/workflow-service.mjs`, `src/postgres-workflow-adapter.mjs`, `src/runtime-config.mjs`, `docs/runtime-configuration.md`, `package.json`, `test/observability.test.mjs`, `test/server-observability.test.mjs`, `test/server-rate-limit.test.mjs`, `test/runtime-config.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: telemetry should be generated from controlled metadata at the boundary; redaction needs to happen before export, not after logs have already accepted raw request bodies or provider data.
+
+## 2026-07-02 — US-049 Add protected audit export
+
+- Added an administrator-only audit export workflow and `/api/v1/audit-events/export` route with required from/to date bounds, export limits, and tenant-scoped PostgreSQL reads.
+- Added CSV export generation with export metadata in every row and formula-injection neutralization for all tabular cells.
+- Added durable `audit_export_requested` events with export id, bounds, count, format, and tenant metadata.
+- Verification: `npm test` (153 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `server.mjs`, `src/audit-export.mjs`, `src/postgres-read-adapter.mjs`, `src/postgres-workflow-adapter.mjs`, `src/workflow-service.mjs`, `package.json`, `test/audit-export.test.mjs`, `test/postgres-workflow-adapter.test.mjs`, `test/server-audit-export.test.mjs`, `test/workflow.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: audit export should be treated as its own governed workflow action; bounds and tenant filters belong before export materialization, and CSV formula protection needs to apply to every cell, not only user-facing labels.

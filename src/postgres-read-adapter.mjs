@@ -384,6 +384,22 @@ export class PostgresReadAdapter {
     }));
   }
 
+  async listAuditEventsForExport({ from, to, limit }) {
+    const boundedLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 5000) : 1000;
+    const result = await this.query(
+      `SELECT id, actor_id, action, entity_type, entity_id, before_summary, after_summary, created_at
+       FROM audit_events
+       WHERE organization_id = $1 AND created_at >= $2 AND created_at <= $3
+       ORDER BY created_at DESC, audit_sequence DESC
+       LIMIT $4`,
+      [this.organizationId, from, to, boundedLimit]
+    );
+    return asRows(result).map(row => ({
+      id: row.id, actorId: row.actor_id, action: row.action, entityType: row.entity_type, entityId: row.entity_id,
+      before: row.before_summary, after: row.after_summary, createdAt: dateValue(row.created_at)
+    }));
+  }
+
   async listTriageComments(projectId) {
     const result = await this.query(
       `SELECT id, project_id AS "projectId", author_id AS "authorId", comment_kind AS kind, comment_text AS comment, created_at AS "createdAt"
