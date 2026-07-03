@@ -944,7 +944,7 @@ test("audit export is admin-only, bounded, formula-safe, and audited", () => {
     const exported = store.exportAuditEvents(admin, { from: "2020-01-01", to: "2099-12-31", limit: 10 });
     assert.equal(exported.metadata.format, "csv");
     assert.ok(exported.metadata.count > 0);
-    assert.match(exported.csv, /export_id,generated_at,from,to,event_id,event_created_at,actor_id,action,entity_type,entity_id,before_summary,after_summary/);
+    assert.match(exported.csv, /export_id,generated_at,from,to,event_id,event_created_at,actor_id,action,entity_type,entity_id,before_present,after_present/);
     assert.match(exported.csv, /"'=HYPERLINK\(""https:\/\/example\.invalid"",""open""\)"/);
     assert.match(exported.csv, /,'\+A1,/);
     assert.equal(store.auditEvents(admin, 20).some(event => event.action === "audit_export_requested" && event.entityId === exported.metadata.exportId && event.after.count === exported.metadata.count), true);

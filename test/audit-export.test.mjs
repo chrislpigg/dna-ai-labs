@@ -36,3 +36,27 @@ test("audit export CSV neutralizes formula-leading cells", () => {
   assert.match(csv, /,'@project,/);
   assert.match(csv, /,'\tA1,/);
 });
+
+test("audit export CSV omits stored before and after summaries", () => {
+  const csv = auditEventsToCsv([{
+    id: "audit-1",
+    createdAt: "2026-07-02T12:00:00.000Z",
+    actorId: "admin",
+    action: "triage_comment_added",
+    entityType: "project",
+    entityId: "project-1",
+    before: { comment: "Sensitive reviewer narrative" },
+    after: { evidenceLink: "https://intranet.example/private/readout", result: "Do not export this result" }
+  }], {
+    exportId: "export-1",
+    generatedAt: "2026-07-02T12:01:00.000Z",
+    from: "2026-07-01T00:00:00.000Z",
+    to: "2026-07-02T23:59:59.999Z"
+  });
+
+  assert.match(csv, /^export_id,generated_at,from,to,event_id,event_created_at,actor_id,action,entity_type,entity_id,before_present,after_present/);
+  assert.match(csv, /project-1,true,true$/);
+  assert.doesNotMatch(csv, /Sensitive reviewer narrative/);
+  assert.doesNotMatch(csv, /intranet\.example\/private\/readout/);
+  assert.doesNotMatch(csv, /Do not export this result/);
+});

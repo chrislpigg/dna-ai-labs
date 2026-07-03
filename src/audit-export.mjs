@@ -3,7 +3,7 @@ import { WorkflowError } from "./workflow-policy.mjs";
 
 export const auditExportColumns = Object.freeze([
   "export_id", "generated_at", "from", "to", "event_id", "event_created_at",
-  "actor_id", "action", "entity_type", "entity_id", "before_summary", "after_summary"
+  "actor_id", "action", "entity_type", "entity_id", "before_present", "after_present"
 ]);
 
 function parseBound(value, label, dateOnlySuffix) {
@@ -49,8 +49,8 @@ export function auditEventsToCsv(events, metadata) {
       event.action,
       event.entityType,
       event.entityId,
-      event.before ?? null,
-      event.after ?? null
+      Boolean(event.before),
+      Boolean(event.after)
     ]);
   }
   return rows.map(row => row.map(csvCell).join(",")).join("\n");

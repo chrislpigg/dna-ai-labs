@@ -51,6 +51,6 @@ test("server audit export route requires admin and returns bounded CSV metadata"
   assert.equal(exported.status, 200);
   assert.equal(exported.body.export.metadata.format, "csv");
   assert.ok(exported.body.export.metadata.count <= 5);
-  assert.match(exported.body.export.csv, /^export_id,generated_at,from,to,event_id,event_created_at,actor_id,action,entity_type,entity_id,before_summary,after_summary/);
+  assert.match(exported.body.export.csv, /^export_id,generated_at,from,to,event_id,event_created_at,actor_id,action,entity_type,entity_id,before_present,after_present/);
   rmSync(directory, { recursive: true, force: true });
 });
