@@ -464,3 +464,12 @@ Started: 2026-06-20
 - Verification: `npm test` (163 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
 - Files changed: `styles.css`, `docs/accessibility-validation.md`, `package.json`, `test/accessibility-regression.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
 - Reusable learning: accessibility checks need to guard both static semantics and dynamic workflow affordances; modal labels, live regions, focus visibility, and no positive `tabindex` are cheap regressions to automate.
+
+## 2026-07-02 — US-053 Publish production operations runbooks
+
+- Added `docs/production-operations-runbook.md` covering deployment, rollback, incident response, access review, dependency outage response, and feature-flag rollback.
+- Added `docs/audit-integrity-runbook.md` and linked it with the existing backup/restore runbook for verification, failure response, evidence preservation, and restore handoff.
+- Added runbook regression tests that require the mandated procedures, related runbook links, role-based ownership, and absence of invented contact details or secret-like content.
+- Verification: `npm test` (167 passing) and `npm run check` passed. `npx vercel env ls preview` reported `No Environment Variables found` for `chris-pigg-s-projects/dna-ai-labs-command-center`, so no preview was created because required production runtime configuration is absent.
+- Files changed: `docs/production-operations-runbook.md`, `docs/audit-integrity-runbook.md`, `package.json`, `test/operations-runbooks.test.mjs`, `scripts/ralph/prd.json`, and `scripts/ralph/progress.txt`.
+- Reusable learning: operations docs should name accountable roles and escalation paths without embedding volatile personal contacts; the approved operations system is the right place for live contact details.
