@@ -73,6 +73,7 @@ h1,h2,.brand strong,.sidebar-cycle h2,.project-card h3,.form-section h3,.timelin
 .tool-comment-list span{font-size:13px;color:#3c4b55}
 .tool-comment-list time{font-size:10px;color:var(--muted)}
 .tool-comment-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.tool-comment-form input{grid-column:1/-1}
 .tool-comment-form textarea{min-height:44px}
 @media (max-width:980px){.tool-grid{grid-template-columns:1fr}.tool-card.is-open{grid-column:auto}}
 @media (max-width:650px){.tool-card{grid-template-columns:1fr}.vote-button{flex-direction:row;width:max-content;gap:7px}.tool-comment-form{grid-template-columns:1fr}}

@@ -129,7 +129,7 @@ export class LabsCatalog {
       description: cleanText(input.description, { field: "Description", max: 2000, required: false }),
       url: cleanUrl(input.url),
       builderId: actor.id,
-      builderName: actor.name || actor.id,
+      builderName: cleanText(input.builderName, { field: "Your name", max: 80, required: false }) || actor.name || "Anonymous",
       createdAt: now()
     };
     this.db.prepare("INSERT INTO catalog_tools (id, name, tagline, description, url, builder_id, builder_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -156,7 +156,8 @@ export class LabsCatalog {
   addComment(actor, toolId, input = {}) {
     this.tool(toolId);
     const body = cleanText(input.body, { field: "Comment", max: 2000 });
-    const comment = { id: randomUUID(), actorId: actor.id, author: actor.name || actor.id, body, createdAt: now() };
+    const author = cleanText(input.author, { field: "Your name", max: 80, required: false }) || actor.name || "Anonymous";
+    const comment = { id: randomUUID(), actorId: actor.id, author, body, createdAt: now() };
     this.db.prepare("INSERT INTO catalog_comments (id, tool_id, actor_id, actor_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(comment.id, toolId, comment.actorId, comment.author, comment.body, comment.createdAt);
     return { comment, comments: this.listComments(toolId) };

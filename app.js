@@ -22,6 +22,24 @@ const activeStages = new Set(["Selected", "Incubating", "Decision pending"]);
 const candidateStages = new Set(["Draft", "Submitted", "Triage"]);
 const draftRoles = new Set(["employee", "submitter", "project-lead", "lab-lead", "admin"]);
 
+function visitorId() {
+  let id = null;
+  try { id = window.localStorage.getItem("labsVisitorId"); } catch { /* storage blocked */ }
+  if (!id || !/^[A-Za-z0-9_-]{8,100}$/.test(id)) {
+    id = (window.crypto?.randomUUID?.() || `v-${Date.now()}-${Math.round(Math.random() * 1e9)}`);
+    try { window.localStorage.setItem("labsVisitorId", id); } catch { /* storage blocked */ }
+  }
+  return id;
+}
+function visitorName() {
+  try { return window.localStorage.getItem("labsVisitorName") || ""; } catch { return ""; }
+}
+function rememberVisitorName(name) {
+  const clean = (name || "").trim();
+  if (!clean) return;
+  try { window.localStorage.setItem("labsVisitorName", clean.slice(0, 80)); } catch { /* storage blocked */ }
+}
+
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" }[char]));
 }
@@ -154,7 +172,7 @@ function renderFellowAssignments(project) {
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
-    headers: { accept: "application/json", ...(demoMode ? { "x-labs-actor": demoActorId } : {}), ...(options.body ? { "content-type": "application/json" } : {}) },
+    headers: { accept: "application/json", "x-labs-visitor": visitorId(), ...(demoMode ? { "x-labs-actor": demoActorId } : {}), ...(options.body ? { "content-type": "application/json" } : {}) },
     ...options
   });
   const payload = await response.json();
@@ -805,6 +823,8 @@ function toolCommentsHtml(tool) {
   return `<div class="tool-feedback">
     <ul class="tool-comment-list">${list || '<li class="empty-note">No feedback yet. Be the first.</li>'}</ul>
     <form class="tool-comment-form" data-tool-comment="${escapeHtml(tool.id)}">
+      <label class="visually-hidden" for="comment-name-${escapeHtml(tool.id)}">Your name</label>
+      <input id="comment-name-${escapeHtml(tool.id)}" name="author" maxlength="80" placeholder="Your name (optional)" value="${escapeHtml(visitorName())}" />
       <label class="visually-hidden" for="comment-${escapeHtml(tool.id)}">Add feedback</label>
       <textarea id="comment-${escapeHtml(tool.id)}" name="body" rows="2" maxlength="2000" placeholder="Share feedback for the builder…" required></textarea>
       <button class="button button-primary" type="submit">Post feedback</button>
@@ -866,8 +886,10 @@ async function toggleToolComments(id) {
 async function submitToolComment(id, form) {
   const body = form.body.value.trim();
   if (!body) return;
+  const author = form.author.value.trim();
+  rememberVisitorName(author);
   try {
-    const { comment, comments } = await api(`/api/v1/tools/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+    const { comment, comments } = await api(`/api/v1/tools/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ body, author }) });
     const tool = tools.find(item => item.id === id);
     tool._comments = comments;
     tool.comments = comments.length;
@@ -879,7 +901,8 @@ async function submitToolComment(id, form) {
 
 async function submitTool(form) {
   const status = document.querySelector("#add-tool-status");
-  const payload = { name: form.name.value, tagline: form.tagline.value, url: form.url.value, description: form.description.value };
+  const payload = { name: form.name.value, builderName: form.builderName.value, tagline: form.tagline.value, url: form.url.value, description: form.description.value };
+  rememberVisitorName(form.builderName.value);
   try {
     await api("/api/v1/tools", { method: "POST", body: JSON.stringify(payload) });
     form.reset();
@@ -927,7 +950,7 @@ document.addEventListener("click", event => {
   if (projectButton) openProject(projectButton.dataset.project);
   const toolSortButton = event.target.closest("[data-tool-sort]");
   if (toolSortButton) { toolSort = toolSortButton.dataset.toolSort; loadTools(); }
-  if (event.target.closest("[data-open-add-tool]")) { const form = document.querySelector("#add-tool-form"); form.hidden = false; form.name.focus(); }
+  if (event.target.closest("[data-open-add-tool]")) { const form = document.querySelector("#add-tool-form"); form.hidden = false; if (!form.builderName.value) form.builderName.value = visitorName(); form.name.focus(); }
   if (event.target.closest("[data-cancel-add-tool]")) { const form = document.querySelector("#add-tool-form"); form.hidden = true; form.reset(); document.querySelector("#add-tool-status").textContent = ""; }
   const voteButton = event.target.closest("[data-vote]");
   if (voteButton) toggleToolVote(voteButton.dataset.vote);

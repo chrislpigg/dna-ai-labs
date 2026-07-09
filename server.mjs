@@ -23,7 +23,7 @@ const groupRoleMapping = demoMode ? demoGroupRoleMapping() : parseGroupRoleMappi
 const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
 const observability = createObservability({ env: process.env, demoMode });
 const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins, observability }) : null;
-const catalog = demoMode ? new LabsCatalog(process.env.LABS_CATALOG_DB_PATH || (isVercel ? "/tmp/dna-ai-labs-catalog.sqlite" : join(root, "data", "labs-catalog.sqlite"))) : null;
+const catalog = new LabsCatalog(process.env.LABS_CATALOG_DB_PATH || (isVercel ? "/tmp/dna-ai-labs-catalog.sqlite" : join(root, "data", "labs-catalog.sqlite")));
 const postgresWorkflow = !demoMode && runtimeConfiguration.valid
   ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins, observability })
   : null;
@@ -94,6 +94,25 @@ async function actor(req) {
   return { ...user, role, identity };
 }
 
+function catalogVisitor(req) {
+  const raw = String(req.headers["x-labs-visitor"] || "").trim();
+  const id = /^[A-Za-z0-9_-]{8,100}$/.test(raw) ? raw : (demoMode ? String(req.headers["x-labs-actor"] || "anonymous").trim() || "anonymous" : "anonymous");
+  return { id };
+}
+
+async function catalogApi(req, res, url) {
+  const path = url.pathname;
+  const visitor = catalogVisitor(req);
+  if (req.method === "GET" && path === "/api/v1/tools") return respond(res, 200, { tools: catalog.listTools(visitor.id, url.searchParams.get("sort")) });
+  if (req.method === "POST" && path === "/api/v1/tools") return respond(res, 201, { tool: catalog.addTool(visitor, await body(req)) });
+  let match = path.match(/^\/api\/v1\/tools\/([^/]+)\/vote$/);
+  if (req.method === "POST" && match) return respond(res, 200, { tool: catalog.toggleVote(visitor, match[1]) });
+  match = path.match(/^\/api\/v1\/tools\/([^/]+)\/comments$/);
+  if (req.method === "GET" && match) return respond(res, 200, { comments: catalog.listComments(match[1]) });
+  if (req.method === "POST" && match) return respond(res, 201, catalog.addComment(visitor, match[1], await body(req)));
+  return respond(res, 404, { error: { code: "NOT_FOUND", message: "API route not found." } });
+}
+
 async function api(req, res, url) {
   const requestActor = await actor(req);
   req._labsActor = requestActor;
@@ -104,16 +123,6 @@ async function api(req, res, url) {
   const path = url.pathname;
   await writeRateLimiter.check({ method: req.method, path, actorId: requestActor.id, organizationId: requestActor.identity?.organization || process.env.LABS_TENANT_ID || "demo-tenant" });
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
-  if (path === "/api/v1/tools" || path.startsWith("/api/v1/tools/")) {
-    if (!catalog) throw new WorkflowError("CATALOG_UNAVAILABLE", "The Labs hub is available only in demo mode.", 503);
-    if (req.method === "GET" && path === "/api/v1/tools") return respond(res, 200, { tools: catalog.listTools(requestActor.id, url.searchParams.get("sort")) });
-    if (req.method === "POST" && path === "/api/v1/tools") return respond(res, 201, { tool: catalog.addTool(requestActor, await body(req)) });
-    let toolMatch = path.match(/^\/api\/v1\/tools\/([^/]+)\/vote$/);
-    if (req.method === "POST" && toolMatch) return respond(res, 200, { tool: catalog.toggleVote(requestActor, toolMatch[1]) });
-    toolMatch = path.match(/^\/api\/v1\/tools\/([^/]+)\/comments$/);
-    if (req.method === "GET" && toolMatch) return respond(res, 200, { comments: catalog.listComments(toolMatch[1]) });
-    if (req.method === "POST" && toolMatch) return respond(res, 201, catalog.addComment(requestActor, toolMatch[1], await body(req)));
-  }
   if (req.method === "GET" && path === "/api/v1/directory/people") return respond(res, 200, { people: await workflow.searchDirectoryPeople(requestActor, url.searchParams.get("q")) });
   if (req.method === "GET" && path === "/api/v1/cycles") return respond(res, 200, { cycles: await workflow.listCycles(requestActor) });
   if (req.method === "POST" && path === "/api/v1/cycles") return respond(res, 201, { cycle: await workflow.createCycle(requestActor, await body(req)) });
@@ -248,7 +257,9 @@ export async function handler(req, res) {
         const status = await readiness();
         return respond(res, status.ready ? 200 : 503, status);
       }
-      if (url.pathname.startsWith("/api/")) await api(req, res, url); else await staticFile(req, res, url);
+      if (url.pathname === "/api/v1/tools" || url.pathname.startsWith("/api/v1/tools/")) await catalogApi(req, res, url);
+      else if (url.pathname.startsWith("/api/")) await api(req, res, url);
+      else await staticFile(req, res, url);
     } catch (error) {
       if (error instanceof WorkflowError) {
         errorCode = error.code;
