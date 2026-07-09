@@ -17,6 +17,7 @@
 
         <nav aria-label="Main navigation">
           <a class="nav-link active" href="#overview" data-view="overview"><span>◉</span> Portfolio</a>
+          <a class="nav-link" href="#labs" data-view="labs"><span>▲</span> Labs hub</a>
           <a class="nav-link" href="#intake" data-view="intake"><span>＋</span> New intake</a>
           <a class="nav-link" href="#cadence" data-view="cadence"><span>↗</span> 90-day launch</a>
           <a class="nav-link" href="#playbook" data-view="playbook"><span>▤</span> Playbook</a>
@@ -97,6 +98,29 @@
               <span><b>01</b> Scale</span><span><b>02</b> Transfer</span><span><b>03</b> Extend once</span><span><b>04</b> Sunset</span>
             </div>
           </section>
+        </section>
+
+        <section id="labs" class="view" aria-label="Labs hub">
+          <div class="content-intro"><p class="eyebrow">Labs hub</p><h2>Everything we're building, in one place.</h2><p>Browse the tools coming out of the Labs, upvote the ones you'd use, and leave feedback for the people building them.</p></div>
+          <div class="labs-toolbar">
+            <div class="labs-sort" role="group" aria-label="Sort tools">
+              <button class="filter active" type="button" data-tool-sort="top">Top</button>
+              <button class="filter" type="button" data-tool-sort="new">Newest</button>
+            </div>
+            <button class="button button-primary" type="button" data-open-add-tool>+ Add a tool</button>
+          </div>
+          <form id="add-tool-form" class="add-tool-form" hidden>
+            <div class="section-heading compact"><div><p class="eyebrow">Share your work</p><h3>Add a tool to the hub</h3></div></div>
+            <p id="add-tool-status" class="form-status" role="status" aria-live="polite"></p>
+            <div class="form-grid">
+              <label>Name<input required name="name" maxlength="120" placeholder="e.g. Release Readiness Assistant" /></label>
+              <label>One-line pitch<input required name="tagline" maxlength="160" placeholder="What does it do, in a sentence?" /></label>
+              <label class="wide">Link to try it<input required name="url" type="url" placeholder="https://…" /></label>
+              <label class="wide">Description<textarea name="description" maxlength="2000" placeholder="Optional: more detail on what it does and who it's for."></textarea></label>
+            </div>
+            <div class="form-action-buttons"><button class="button button-ghost" type="button" data-cancel-add-tool>Cancel</button><button class="button button-primary" type="submit">Publish to hub</button></div>
+          </form>
+          <div id="tool-grid" class="tool-grid" aria-live="polite"></div>
         </section>
 
         <section id="intake" class="view" aria-label="New project intake">

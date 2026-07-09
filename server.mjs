@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LabsStore } from "./src/labs-store.mjs";
+import { LabsCatalog } from "./src/labs-catalog.mjs";
 import { createIdentityProvider } from "./src/identity-provider.mjs";
 import { createPostgresWorkflowAdapter } from "./src/postgres-workflow-adapter.mjs";
 import { createDatabaseReadinessProbe } from "./src/database-readiness.mjs";
@@ -22,6 +23,7 @@ const groupRoleMapping = demoMode ? demoGroupRoleMapping() : parseGroupRoleMappi
 const approvedArtifactOrigins = runtimeConfiguration.approvedArtifactOrigins.length ? runtimeConfiguration.approvedArtifactOrigins : ["https://intranet.example"];
 const observability = createObservability({ env: process.env, demoMode });
 const store = demoMode ? new LabsStore(process.env.LABS_DB_PATH || (isVercel ? "/tmp/dna-ai-labs.sqlite" : join(root, "data", "labs.sqlite")), { approvedArtifactOrigins, observability }) : null;
+const catalog = demoMode ? new LabsCatalog(process.env.LABS_CATALOG_DB_PATH || (isVercel ? "/tmp/dna-ai-labs-catalog.sqlite" : join(root, "data", "labs-catalog.sqlite"))) : null;
 const postgresWorkflow = !demoMode && runtimeConfiguration.valid
   ? createPostgresWorkflowAdapter({ databaseUrl: process.env.LABS_DATABASE_URL, organizationId: process.env.LABS_TENANT_ID, approvedArtifactOrigins, observability })
   : null;
@@ -102,6 +104,16 @@ async function api(req, res, url) {
   const path = url.pathname;
   await writeRateLimiter.check({ method: req.method, path, actorId: requestActor.id, organizationId: requestActor.identity?.organization || process.env.LABS_TENANT_ID || "demo-tenant" });
   if (req.method === "GET" && path === "/api/v1/session") return respond(res, 200, { user: requestActor, demoMode });
+  if (path === "/api/v1/tools" || path.startsWith("/api/v1/tools/")) {
+    if (!catalog) throw new WorkflowError("CATALOG_UNAVAILABLE", "The Labs hub is available only in demo mode.", 503);
+    if (req.method === "GET" && path === "/api/v1/tools") return respond(res, 200, { tools: catalog.listTools(requestActor.id, url.searchParams.get("sort")) });
+    if (req.method === "POST" && path === "/api/v1/tools") return respond(res, 201, { tool: catalog.addTool(requestActor, await body(req)) });
+    let toolMatch = path.match(/^\/api\/v1\/tools\/([^/]+)\/vote$/);
+    if (req.method === "POST" && toolMatch) return respond(res, 200, { tool: catalog.toggleVote(requestActor, toolMatch[1]) });
+    toolMatch = path.match(/^\/api\/v1\/tools\/([^/]+)\/comments$/);
+    if (req.method === "GET" && toolMatch) return respond(res, 200, { comments: catalog.listComments(toolMatch[1]) });
+    if (req.method === "POST" && toolMatch) return respond(res, 201, catalog.addComment(requestActor, toolMatch[1], await body(req)));
+  }
   if (req.method === "GET" && path === "/api/v1/directory/people") return respond(res, 200, { people: await workflow.searchDirectoryPeople(requestActor, url.searchParams.get("q")) });
   if (req.method === "GET" && path === "/api/v1/cycles") return respond(res, 200, { cycles: await workflow.listCycles(requestActor) });
   if (req.method === "POST" && path === "/api/v1/cycles") return respond(res, 201, { cycle: await workflow.createCycle(requestActor, await body(req)) });
@@ -282,5 +294,5 @@ if (!isVercel) {
   server.listen(port, () => console.log(`DNA AI Labs command center listening on http://localhost:${port} (${demoMode ? "explicit demo mode" : "production runtime fail-closed"})`));
 }
 
-function shutdown() { server?.close(() => { Promise.resolve(workflow?.close()).finally(() => Promise.resolve(writeRateLimiter?.close?.()).finally(() => process.exit(0))); }); }
+function shutdown() { server?.close(() => { catalog?.close(); Promise.resolve(workflow?.close()).finally(() => Promise.resolve(writeRateLimiter?.close?.()).finally(() => process.exit(0))); }); }
 if (!isVercel) { process.on("SIGINT", shutdown); process.on("SIGTERM", shutdown); }

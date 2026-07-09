@@ -13,6 +13,10 @@ let fellowAssignments = [];
 let fellowAssignmentError = "";
 let portfolioMetrics = null;
 let portfolioFilters = { cycleId: "", stage: "", ownerId: "", risk: "", outcome: "", theme: "" };
+let tools = [];
+let toolSort = "top";
+let expandedToolId = null;
+let toolsLoaded = false;
 
 const activeStages = new Set(["Selected", "Incubating", "Decision pending"]);
 const candidateStages = new Set(["Draft", "Submitted", "Triage"]);
@@ -784,6 +788,112 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.remove("show"), 4200);
 }
 
+async function loadTools() {
+  try {
+    const { tools: list } = await api(`/api/v1/tools?sort=${encodeURIComponent(toolSort)}`);
+    tools = list;
+    toolsLoaded = true;
+    renderTools();
+  } catch (error) {
+    document.querySelector("#tool-grid").innerHTML = `<p class="empty-note">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function toolCommentsHtml(tool) {
+  if (expandedToolId !== tool.id) return "";
+  const list = (tool._comments || []).map(comment => `<li><b>${escapeHtml(comment.author)}</b><span>${escapeHtml(comment.body)}</span><time>${formatDateTime(comment.createdAt)}</time></li>`).join("");
+  return `<div class="tool-feedback">
+    <ul class="tool-comment-list">${list || '<li class="empty-note">No feedback yet. Be the first.</li>'}</ul>
+    <form class="tool-comment-form" data-tool-comment="${escapeHtml(tool.id)}">
+      <label class="visually-hidden" for="comment-${escapeHtml(tool.id)}">Add feedback</label>
+      <textarea id="comment-${escapeHtml(tool.id)}" name="body" rows="2" maxlength="2000" placeholder="Share feedback for the builder…" required></textarea>
+      <button class="button button-primary" type="submit">Post feedback</button>
+    </form>
+  </div>`;
+}
+
+function toolCardHtml(tool) {
+  return `<article class="tool-card${expandedToolId === tool.id ? " is-open" : ""}">
+    <button class="vote-button${tool.hasVoted ? " is-voted" : ""}" type="button" data-vote="${escapeHtml(tool.id)}" aria-pressed="${tool.hasVoted}" aria-label="Upvote ${escapeHtml(tool.name)}">
+      <span class="vote-arrow">▲</span><span class="vote-count">${tool.votes}</span>
+    </button>
+    <div class="tool-body">
+      <div class="tool-head">
+        <h3>${escapeHtml(tool.name)}</h3>
+        <a class="button button-ghost tool-try" href="${escapeHtml(tool.url)}" target="_blank" rel="noopener noreferrer">Try it ↗</a>
+      </div>
+      <p class="tool-tagline">${escapeHtml(tool.tagline)}</p>
+      ${tool.description ? `<p class="tool-description">${escapeHtml(tool.description)}</p>` : ""}
+      <div class="tool-meta">
+        <span>By ${escapeHtml(tool.builder.name)}</span>
+        <button class="tool-comment-toggle" type="button" data-tool-comments="${escapeHtml(tool.id)}">${expandedToolId === tool.id ? "Hide feedback" : `Feedback · ${tool.comments}`}</button>
+      </div>
+      ${toolCommentsHtml(tool)}
+    </div>
+  </article>`;
+}
+
+function renderTools() {
+  const grid = document.querySelector("#tool-grid");
+  document.querySelectorAll("[data-tool-sort]").forEach(button => button.classList.toggle("active", button.dataset.toolSort === toolSort));
+  if (!tools.length) {
+    grid.innerHTML = '<p class="empty-note">No tools yet. Add the first one.</p>';
+    return;
+  }
+  grid.innerHTML = tools.map(toolCardHtml).join("");
+}
+
+async function toggleToolVote(id) {
+  try {
+    const { tool } = await api(`/api/v1/tools/${encodeURIComponent(id)}/vote`, { method: "POST" });
+    const existing = tools.find(item => item.id === id);
+    Object.assign(existing, tool, { _comments: existing?._comments });
+    renderTools();
+  } catch (error) { showToast(error.message); }
+}
+
+async function toggleToolComments(id) {
+  if (expandedToolId === id) { expandedToolId = null; renderTools(); return; }
+  expandedToolId = id;
+  const tool = tools.find(item => item.id === id);
+  try {
+    const { comments } = await api(`/api/v1/tools/${encodeURIComponent(id)}/comments`);
+    tool._comments = comments;
+  } catch (error) { showToast(error.message); }
+  renderTools();
+}
+
+async function submitToolComment(id, form) {
+  const body = form.body.value.trim();
+  if (!body) return;
+  try {
+    const { comment, comments } = await api(`/api/v1/tools/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ body }) });
+    const tool = tools.find(item => item.id === id);
+    tool._comments = comments;
+    tool.comments = comments.length;
+    void comment;
+    renderTools();
+    showToast("Feedback posted.");
+  } catch (error) { showToast(error.message); }
+}
+
+async function submitTool(form) {
+  const status = document.querySelector("#add-tool-status");
+  const payload = { name: form.name.value, tagline: form.tagline.value, url: form.url.value, description: form.description.value };
+  try {
+    await api("/api/v1/tools", { method: "POST", body: JSON.stringify(payload) });
+    form.reset();
+    form.hidden = true;
+    status.textContent = "";
+    toolSort = "new";
+    await loadTools();
+    showToast("Tool published to the hub.");
+  } catch (error) {
+    status.textContent = error.message;
+    status.className = "form-status is-error";
+  }
+}
+
 function showView(view) {
   if (view === "cycles" && !canAdminCycles()) {
     showToast("Cycle administration is available only to program administrators.");
@@ -791,11 +901,12 @@ function showView(view) {
   }
   document.querySelectorAll(".view").forEach(section => section.classList.toggle("active", section.id === view));
   document.querySelectorAll(".nav-link").forEach(link => link.classList.toggle("active", link.dataset.view === view));
-  const copy = { overview: ["Incubation portfolio", "Make useful things travel."], intake: ["Lab intake", "Bring a company problem."], cadence: ["Cycle 01", "Prove, transfer, repeat."], playbook: ["Operating playbook", "Create company-wide leverage."], cycles: ["Program administration", "Configure Lab cycles."], audit: ["Governance record", "See the decision trail."] }[view];
+  const copy = { overview: ["Incubation portfolio", "Make useful things travel."], labs: ["Labs hub", "Everything we're building."], intake: ["Lab intake", "Bring a company problem."], cadence: ["Cycle 01", "Prove, transfer, repeat."], playbook: ["Operating playbook", "Create company-wide leverage."], cycles: ["Program administration", "Configure Lab cycles."], audit: ["Governance record", "See the decision trail."] }[view];
   document.querySelector("#page-kicker").textContent = copy[0];
   document.querySelector("#page-title").textContent = copy[1];
   if (view === "audit" && !auditLoaded) renderAudit();
   if (view === "cycles") loadCycles();
+  if (view === "labs") loadTools();
 }
 
 document.addEventListener("click", event => {
@@ -814,6 +925,14 @@ document.addEventListener("click", event => {
   }
   const projectButton = event.target.closest("[data-project]");
   if (projectButton) openProject(projectButton.dataset.project);
+  const toolSortButton = event.target.closest("[data-tool-sort]");
+  if (toolSortButton) { toolSort = toolSortButton.dataset.toolSort; loadTools(); }
+  if (event.target.closest("[data-open-add-tool]")) { const form = document.querySelector("#add-tool-form"); form.hidden = false; form.name.focus(); }
+  if (event.target.closest("[data-cancel-add-tool]")) { const form = document.querySelector("#add-tool-form"); form.hidden = true; form.reset(); document.querySelector("#add-tool-status").textContent = ""; }
+  const voteButton = event.target.closest("[data-vote]");
+  if (voteButton) toggleToolVote(voteButton.dataset.vote);
+  const commentToggle = event.target.closest("[data-tool-comments]");
+  if (commentToggle) toggleToolComments(commentToggle.dataset.toolComments);
   const draftButton = event.target.closest("[data-draft]");
   if (draftButton) resumeIntakeDraft(draftButton.dataset.draft);
   if (event.target.closest("[data-save-draft]")) saveIntakeDraft();
@@ -877,6 +996,16 @@ document.querySelector("#intake-form").addEventListener("submit", async event =>
   } catch (error) { showToast(error.message); }
 });
 
+document.querySelector("#add-tool-form").addEventListener("submit", event => {
+  event.preventDefault();
+  submitTool(event.currentTarget);
+});
+document.addEventListener("submit", event => {
+  const commentForm = event.target.closest("[data-tool-comment]");
+  if (!commentForm) return;
+  event.preventDefault();
+  submitToolComment(commentForm.dataset.toolComment, commentForm);
+});
 document.querySelector("#cycle-form").addEventListener("submit", saveCycle);
 document.querySelector("#portfolio-filter-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -907,5 +1036,5 @@ async function init() {
 }
 
 const initialView = window.location.hash.slice(1);
-if (["overview", "intake", "cadence", "playbook", "cycles"].includes(initialView)) showView(initialView);
+if (["overview", "labs", "intake", "cadence", "playbook", "cycles"].includes(initialView)) showView(initialView);
 init();
